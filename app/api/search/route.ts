@@ -1,494 +1,479 @@
-import { NextRequest, NextResponse } from "next/server";
+"use client";
 
-type UnifiedResult = {
+import { useState } from "react";
+
+type SearchResult = {
   id: string;
   title: string;
   year: string | null;
-  language: string | null;
-  documentType: string;
-  sourceType: string;
+  language?: string | null;
+  documentType?: string;
+  sourceType?: string;
   officialUrl: string | null;
-  thumbnailUrl: string | null;
+  thumbnailUrl?: string | null;
   source: string;
 };
 
-type ScoredResult = UnifiedResult & {
-  score: number;
-};
-
-type ExternalPortal = {
+type SmartLink = {
   name: string;
   url: string;
-  note: string;
 };
 
-function decodeXmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+type SearchResponse = {
+  results?: SearchResult[];
+  smartLinks?: SmartLink[];
+  error?: string;
+};
+
+function badgeStyle(background: string, color: string): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    background,
+    color,
+    border: "1px solid rgba(255,255,255,0.08)",
+  };
 }
 
-function extractXmlTag(xml: string, tag: string): string[] {
-  const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi");
+export default function SearchPage() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  return [...xml.matchAll(regex)].map((m) =>
-    decodeXmlEntities(
-      m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim()
-    )
-  );
-}
-function normalizeYear(value: string | null): number | null {
-  if (!value) return null;
-  const match = value.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
-  return match ? Number(match[1]) : null;
-}
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
 
-function dedupeResults(results: UnifiedResult[]): UnifiedResult[] {
-  const seen = new Set<string>();
-  const unique: UnifiedResult[] = [];
+    if (!query.trim()) return;
 
-  for (const item of results) {
-    const key = `${item.title.toLowerCase()}|${item.year ?? ""}|${item.source}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(item);
-  }
+    setLoading(true);
+    setError("");
+    setResults([]);
+    setSmartLinks([]);
 
-  return unique;
-}
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const data: SearchResponse = await res.json();
 
-function sortResults(results: ScoredResult[]): ScoredResult[] {
-  return [...results].sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-
-    const aYear = normalizeYear(a.year);
-    const bYear = normalizeYear(b.year);
-
-    if (aYear !== null && bYear !== null) return bYear - aYear;
-    if (aYear !== null) return -1;
-    if (bYear !== null) return 1;
-    return 0;
-  });
-}
-
-function computeScore(item: UnifiedResult, query: string): number {
-  const q = query.toLowerCase().trim();
-  let score = 0;
-
-  const title = item.title.toLowerCase();
-
-  if (title.includes(q)) score += 5;
-  if (title.startsWith(q)) score += 3;
-
-  const queryYearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
-  if (item.year && queryYearMatch && item.year.includes(queryYearMatch[1])) {
-    score += 4;
-  }
-
-  if (item.documentType === "Manuscrit") score += 2;
-  if (item.sourceType === "Source primaire") score += 2;
-
-  return score;
-}
-
-function expandQuery(query: string): string[] {
-  const q = query.toLowerCase();
-  const expansions = new Set<string>();
-
-  expansions.add(query);
-
-  if (q.includes("traité")) {
-    expansions.add(query.replace(/traité/gi, "treaty"));
-    expansions.add(query.replace(/traité/gi, "معاهدة"));
-  }
-
-  if (q.includes("tafna")) {
-    expansions.add("Treaty of Tafna");
-    expansions.add("Tafna treaty");
-    expansions.add("معاهدة تافنة");
-    expansions.add("Tafna 1837");
-    expansions.add("Abdelkader Tafna");
-    expansions.add("Abd el-Kader Tafna");
-  }
-
-  return Array.from(expansions);
-}
-
-async function searchInternetArchive(query: string): Promise<UnifiedResult[]> {
-  const url =
-    "https://archive.org/advancedsearch.php" +
-    `?q=${encodeURIComponent(`(${query}) AND mediatype:texts`)}` +
-    "&fl[]=identifier" +
-    "&fl[]=title" +
-    "&fl[]=year" +
-    "&fl[]=language" +
-    "&fl[]=mediatype" +
-    "&rows=10" +
-    "&page=1" +
-    "&output=json";
-
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const docs = data.response?.docs ?? [];
-
-  return docs.map((doc: any) => ({
-    id: `archive:${doc.identifier ?? crypto.randomUUID()}`,
-    title: doc.title ?? "Sans titre",
-    year: doc.year ?? null,
-    language: Array.isArray(doc.language)
-      ? doc.language[0]
-      : doc.language ?? null,
-    documentType: doc.mediatype === "texts" ? "Livre" : "Autre",
-    sourceType:
-      doc.mediatype === "texts" ? "Source secondaire" : "Source primaire",
-    officialUrl: doc.identifier
-      ? `https://archive.org/details/${doc.identifier}`
-      : null,
-    thumbnailUrl: doc.identifier
-      ? `https://archive.org/services/img/${doc.identifier}`
-      : null,
-    source: "Internet Archive",
-  }));
-}
-
-async function searchGallica(query: string): Promise<UnifiedResult[]> {
-  const cql = `(gallica all "${query}")`;
-  const url =
-    "https://gallica.bnf.fr/SRU" +
-    `?operation=searchRetrieve&version=1.2&query=${encodeURIComponent(cql)}` +
-    "&maximumRecords=10" +
-    "&startRecord=1";
-
-  const res = await fetch(url, {
-    headers: { Accept: "application/xml,text/xml;q=0.9,*/*;q=0.8" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!res.ok) return [];
-
-  const xml = await res.text();
-
-  const titles = extractXmlTag(xml, "dc:title");
-  const dates = extractXmlTag(xml, "dc:date");
-  const languages = extractXmlTag(xml, "dc:language");
-  const identifiers = extractXmlTag(xml, "dc:identifier");
-  const types = extractXmlTag(xml, "dc:type");
-
-  const results: UnifiedResult[] = [];
-
-  for (let i = 0; i < titles.length; i++) {
-    const title = titles[i] || "Sans titre";
-    const year = dates[i] || null;
-    const language = languages[i] || null;
-    const identifier = identifiers[i] || "";
-    const rawType = (types[i] || "").toLowerCase();
-
-    const arkMatch = identifier.match(/ark:\/12148\/[a-z0-9]+/i);
-    const ark = arkMatch ? arkMatch[0] : null;
-
-    const officialUrl = ark
-      ? `https://gallica.bnf.fr/${ark}`
-      : identifier || null;
-
-    let documentType = "Document";
-    let sourceType = "Source primaire";
-
-    if (rawType.includes("monographie") || rawType.includes("livre")) {
-      documentType = "Livre";
-      sourceType = "Source secondaire";
-    } else if (rawType.includes("fascicule") || rawType.includes("journal")) {
-      documentType = "Journal";
-      sourceType = "Source primaire";
-    } else if (rawType.includes("manuscrit")) {
-      documentType = "Manuscrit";
-      sourceType = "Source primaire";
-    } else if (rawType.includes("carte")) {
-      documentType = "Carte";
-      sourceType = "Source primaire";
-    } else if (rawType.includes("image")) {
-      documentType = "Image";
-      sourceType = "Source primaire";
-    }
-
-    results.push({
-      id: `gallica:${ark ?? i}`,
-      title,
-      year,
-      language,
-      documentType,
-      sourceType,
-      officialUrl,
-      thumbnailUrl: null,
-      source: "Gallica / BnF",
-    });
-  }
-
-  return results;
-}
-
-async function searchLibraryOfCongress(query: string): Promise<UnifiedResult[]> {
-  const url =
-    "https://www.loc.gov/search/" +
-    `?q=${encodeURIComponent(query)}` +
-    "&fo=json" +
-    "&c=10" +
-    "&sp=1";
-
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const docs = data.results ?? [];
-
-  return docs.map((doc: any, index: number) => {
-    const originalFormat = Array.isArray(doc.original_format)
-      ? doc.original_format[0]
-      : null;
-
-    let documentType = "Document";
-    let sourceType = "Source primaire";
-
-    const fmt = (originalFormat || "").toLowerCase();
-
-    if (fmt.includes("book")) {
-      documentType = "Livre";
-      sourceType = "Source secondaire";
-    } else if (fmt.includes("manuscript")) {
-      documentType = "Manuscrit";
-    } else if (fmt.includes("map")) {
-      documentType = "Carte";
-    } else if (fmt.includes("newspaper")) {
-      documentType = "Journal";
-    } else if (fmt.includes("photo") || fmt.includes("print")) {
-      documentType = "Image";
-    }
-
-    return {
-      id: `loc:${doc.id ?? index}`,
-      title: doc.title ?? "Sans titre",
-      year: doc.date ?? null,
-      language: Array.isArray(doc.language)
-        ? doc.language[0]
-        : doc.language ?? null,
-      documentType,
-      sourceType,
-      officialUrl: doc.url || doc.id || null,
-      thumbnailUrl: Array.isArray(doc.image_url) ? doc.image_url[0] : null,
-      source: "Library of Congress",
-    };
-  });
-}
-
-async function searchNara(query: string): Promise<UnifiedResult[]> {
-  const url =
-    "https://catalog.archives.gov/api/v2" +
-    `?q=${encodeURIComponent(query)}` +
-    "&rows=10";
-
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const docs = data?.body?.hits?.hits ?? [];
-
-  return docs.map((hit: any, index: number) => {
-    const source = hit?._source ?? {};
-    const title =
-      source?.title ||
-      source?.record?.title ||
-      "Sans titre";
-
-    const naId =
-      source?.naId ||
-      source?.record?.naId ||
-      null;
-
-    const productionDates = source?.productionDates ?? [];
-    const year =
-      Array.isArray(productionDates) && productionDates.length > 0
-        ? productionDates[0]?.logicalDate || null
-        : null;
-
-    const thumb =
-      source?.objects?.object?.thumbnail?.["@url"] ||
-      source?.objects?.object?.file?.["@url"] ||
-      null;
-
-    return {
-      id: `nara:${naId ?? index}`,
-      title,
-      year,
-      language: null,
-      documentType: "Archive",
-      sourceType: "Source primaire",
-      officialUrl: naId
-        ? `https://catalog.archives.gov/id/${naId}`
-        : null,
-      thumbnailUrl: thumb,
-      source: "National Archives (USA)",
-    };
-  });
-}
-
-function buildExternalPortals(query: string): ExternalPortal[] {
-  const encoded = encodeURIComponent(query);
-
-  return [
-    {
-      name: "PARES (archives espagnoles)",
-      url:
-        "https://pares.cultura.gob.es/metapares/advancedSearchForm" +
-        `?title=&authors=&publisher=&year=&language=&centro=&topics=%22${encoded}%22&pagNum=1&pagSize=10`,
-      note: "Portail officiel espagnol ajouté avec lien de recherche prérempli.",
-    },
-    {
-      name: "CIA FOIA Reading Room",
-      url: "https://www.cia.gov/readingroom/home",
-      note:
-        "Salle de lecture FOIA officielle de la CIA avec recherche documentaire et documents déclassifiés.",
-    },
-    {
-      name: "CIA Historical Collections",
-      url: "https://www.cia.gov/readingroom/historical-collections",
-      note:
-        "Collections historiques officielles de la CIA : ensembles documentaires thématiques et déclassifiés.",
-    },
-    {
-      name: "CIA Advanced Search",
-      url: "https://www.cia.gov/readingroom/advanced-search-view",
-      note:
-        "Recherche avancée officielle de la CIA Reading Room pour explorer les documents FOIA.",
-    },
-    {
-      name: "CIA CREST Archive",
-      url: "https://www.cia.gov/readingroom/collection/crest-25-year-program-archive",
-      note:
-        "Archive CREST officielle de la CIA, utile pour les recherches historiques déclassifiées.",
-    },
-    {
-      name: "HathiTrust",
-      url: "https://babel.hathitrust.org/cgi/ls",
-      note:
-        "Portail officiel utile, mais pas de vraie API publique de recherche par mot-clé vérifiée ici.",
-    },
-    {
-      name: "World Digital Library",
-      url: "https://www.loc.gov/collections/world-digital-library/",
-      note:
-        "Collection historique aujourd’hui portée par la Library of Congress.",
-    },
-    {
-      name: "Archives Portal Europe",
-      url: "https://www.archivesportaleurope.net/",
-      note:
-        "API existante, mais elle demande compte/clé et dépend des permissions des institutions contributrices.",
-    },
-    {
-      name: "NYPL Digital Collections",
-      url: "https://digitalcollections.nypl.org/",
-      note:
-        "API existante mais authentification requise.",
-    },
-    {
-      name: "Arolsen Archives",
-      url: "https://collections.arolsen-archives.org/en/",
-      note:
-        "Recherche en ligne disponible ; aucune API publique générale vérifiée ici.",
-    },
-    {
-      name: "Smithsonian Open Access",
-      url: "https://www.si.edu/openaccess",
-      note: "API disponible avec clé API.",
-    },
-    {
-      name: "Devlet Arşivleri Başkanlığı",
-      url: "https://www.devletarsivleri.gov.tr/",
-      note:
-        "Portail officiel trouvé, mais pas de documentation API publique générale vérifiée ici.",
-    },
-    {
-      name: "Archives du Maroc",
-      url: "https://www.archivesdumaroc.ma/",
-      note:
-        "Portail officiel trouvé, mais pas de documentation API publique générale vérifiée ici.",
-    },
-  ];
-}
-export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q")?.trim();
-
-  if (!q) {
-    return NextResponse.json(
-      { error: "Le paramètre q est obligatoire." },
-      { status: 400 }
-    );
-  }
-
-  try {
-    const queries = expandQuery(q);
-
-    const responses = await Promise.allSettled(
-      queries.map((qi) =>
-        Promise.allSettled([
-          searchInternetArchive(qi),
-          searchGallica(qi),
-          searchLibraryOfCongress(qi),
-          searchNara(qi),
-        ])
-      )
-    );
-
-    const allResults: UnifiedResult[] = [];
-
-    responses.forEach((queryResult) => {
-      if (queryResult.status === "fulfilled") {
-        queryResult.value.forEach((sourceResult) => {
-          if (sourceResult.status === "fulfilled") {
-            allResults.push(...sourceResult.value);
-          }
-        });
+      if (!res.ok) {
+        setError(data.error || "Une erreur est survenue.");
+        return;
       }
-    });
 
-    const merged = sortResults(
-      dedupeResults(allResults)
-        .map((item) => ({
-          ...item,
-          score: computeScore(item, q),
-        }))
-        .filter((item) => item.score >= 2)
-    );
-
-    return NextResponse.json({
-      query: q,
-      expandedQueries: queries,
-      total: merged.length,
-      results: merged,
-      externalPortals: buildExternalPortals(q),
-    });
-  } catch (error) {
-    console.error("Erreur API search:", error);
-
-    return NextResponse.json(
-      { error: "Impossible de contacter les archives en ligne." },
-      { status: 500 }
-    );
+      setResults(data.results || []);
+      setSmartLinks(data.smartLinks || []);
+    } catch {
+      setError("Impossible de lancer la recherche.");
+    } finally {
+      setLoading(false);
+    }
   }
+
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        background:
+          "radial-gradient(circle at top, rgba(168,85,247,0.22), transparent 28%), linear-gradient(135deg, #07152f 0%, #0b1733 45%, #111827 100%)",
+        color: "#fff",
+        padding: "40px 20px 80px",
+      }}
+    >
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <section style={{ textAlign: "center", marginBottom: 36 }}>
+          <h1
+            style={{
+              fontSize: 60,
+              margin: 0,
+              fontWeight: 900,
+              letterSpacing: -2,
+              lineHeight: 1,
+            }}
+          >
+            <span
+              style={{
+                background: "linear-gradient(90deg, #ff3cac, #7c3aed, #38bdf8)",
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+              }}
+            >
+              Histori
+            </span>
+            <span style={{ color: "#f8fafc" }}>Source</span>
+          </h1>
+
+          <p
+            style={{
+              marginTop: 18,
+              fontSize: 20,
+              color: "rgba(255,255,255,0.78)",
+              maxWidth: 720,
+              marginInline: "auto",
+            }}
+          >
+            Recherchez des documents historiques dans plusieurs archives mondiales,
+            avec accès direct aux sources officielles.
+          </p>
+
+          <div
+            style={{
+              marginTop: 18,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 16px",
+              borderRadius: 999,
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            <span
+              style={{
+                background: "#ec4899",
+                padding: "4px 10px",
+                borderRadius: 999,
+                fontSize: 11,
+              }}
+            >
+              BETA
+            </span>
+            Moteur historique multilingue
+          </div>
+        </section>
+
+        <section
+          style={{
+            maxWidth: 820,
+            margin: "0 auto",
+            background: "rgba(255,255,255,0.94)",
+            color: "#0f172a",
+            borderRadius: 22,
+            padding: 24,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+            border: "1px solid rgba(255,255,255,0.15)",
+          }}
+        >
+          <form onSubmit={handleSearch}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <label
+                htmlFor="historisource-search"
+                style={{
+                  fontSize: 18,
+                  fontWeight: 800,
+                }}
+              >
+                Requête historique
+              </label>
+
+              <span style={{ color: "#64748b", fontSize: 13 }}>
+                {query.length} caractères
+              </span>
+            </div>
+
+            <textarea
+              id="historisource-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Exemple : Lettre du sultan du Maroc, à Pedro IV, roi d'Aragon, datée du 25 septembre 1350."
+              style={{
+                width: "100%",
+                minHeight: 140,
+                padding: 16,
+                borderRadius: 16,
+                border: "1px solid #cbd5e1",
+                resize: "vertical",
+                fontSize: 16,
+                lineHeight: 1.5,
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+                outline: "none",
+                background: "#fff",
+              }}
+            />
+
+            <div style={{ marginTop: 12, color: "#64748b", fontSize: 14 }}>
+              Astuce : essaie aussi{" "}
+              <button
+                type="button"
+                onClick={() =>
+                  setQuery(
+                    "Lettre du sultan du Maroc, à Pedro IV, roi d'Aragon, datée du 25 septembre 1350."
+                  )
+                }
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  color: "#475569",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  fontSize: 14,
+                }}
+              >
+                la lettre du sultan du Maroc à Pedro IV
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 22,
+                display: "flex",
+                justifyContent: "center",
+              }}
+            >
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  border: "none",
+                  borderRadius: 14,
+                  padding: "14px 30px",
+                  fontSize: 17,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: "linear-gradient(90deg, #ec4899, #f43f5e)",
+                  cursor: loading ? "not-allowed" : "pointer",
+                  opacity: loading ? 0.75 : 1,
+                  boxShadow: "0 14px 34px rgba(236,72,153,0.35)",
+                }}
+              >
+                {loading ? "Recherche en cours..." : "Lancer la recherche"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {error && (
+          <div
+            style={{
+              maxWidth: 820,
+              margin: "22px auto 0",
+              padding: 14,
+              borderRadius: 14,
+              background: "rgba(127,29,29,0.35)",
+              border: "1px solid rgba(248,113,113,0.35)",
+              color: "#fecaca",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {smartLinks.length > 0 && (
+          <section
+            style={{
+              maxWidth: 980,
+              margin: "26px auto 0",
+            }}
+          >
+            <h2 style={{ fontSize: 24, marginBottom: 14 }}>
+              🔎 Accès direct aux archives
+            </h2>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 14,
+              }}
+            >
+              {smartLinks.map((link, i) => (
+                <a
+                  key={i}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    textDecoration: "none",
+                    color: "#fff",
+                    background: "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 16,
+                    padding: 16,
+                    backdropFilter: "blur(8px)",
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>{link.name}</div>
+                  <div style={{ marginTop: 8, color: "#cbd5e1", fontSize: 13 }}>
+                    Ouvrir la recherche ciblée
+                  </div>
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section
+          style={{
+            maxWidth: 980,
+            margin: "30px auto 0",
+          }}
+        >
+          {results.length > 0 && (
+            <h2 style={{ fontSize: 28, marginBottom: 16 }}>
+              Résultats trouvés
+            </h2>
+          )}
+
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+            }}
+          >
+            {results.map((item) => (
+              <article
+                key={item.id}
+                style={{
+                  background: "rgba(255,255,255,0.96)",
+                  color: "#0f172a",
+                  borderRadius: 18,
+                  padding: 18,
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  boxShadow: "0 14px 32px rgba(0,0,0,0.2)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 18,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  {item.thumbnailUrl ? (
+                    <img
+                      src={item.thumbnailUrl}
+                      alt={item.title}
+                      style={{
+                        width: 110,
+                        height: 150,
+                        objectFit: "cover",
+                        borderRadius: 12,
+                        border: "1px solid #e2e8f0",
+                        flexShrink: 0,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 110,
+                        height: 150,
+                        borderRadius: 12,
+                        background:
+                          "linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)",
+                        border: "1px solid #e2e8f0",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+
+                  <div style={{ flex: 1 }}>
+                    <h3
+                      style={{
+                        margin: "0 0 10px 0",
+                        fontSize: 28,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {item.title}
+                    </h3>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 10,
+                        marginBottom: 14,
+                      }}
+                    >
+                      <span style={badgeStyle("#eef2ff", "#4338ca")}>
+                        {item.source}
+                      </span>
+
+                      {item.documentType && (
+                        <span style={badgeStyle("#fdf2f8", "#be185d")}>
+                          {item.documentType}
+                        </span>
+                      )}
+
+                      {item.sourceType && (
+                        <span style={badgeStyle("#ecfeff", "#0f766e")}>
+                          {item.sourceType}
+                        </span>
+                      )}
+                    </div>
+
+                    <p style={{ margin: "6px 0", color: "#334155" }}>
+                      <strong>Date :</strong> {item.year || "Inconnue"}
+                    </p>
+
+                    <p style={{ margin: "6px 0", color: "#334155" }}>
+                      <strong>Langue :</strong> {item.language || "Non renseignée"}
+                    </p>
+
+                    {item.officialUrl ? (
+                      <a
+                        href={item.officialUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          display: "inline-block",
+                          marginTop: 12,
+                          background: "linear-gradient(90deg, #2563eb, #3b82f6)",
+                          color: "#fff",
+                          padding: "10px 16px",
+                          borderRadius: 12,
+                          textDecoration: "none",
+                          fontWeight: 800,
+                          boxShadow: "0 10px 24px rgba(37,99,235,0.25)",
+                        }}
+                      >
+                        Ouvrir la source officielle
+                      </a>
+                    ) : (
+                      <p style={{ marginTop: 12, color: "#475569" }}>
+                        Source officielle non disponible
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {!loading && query.trim() !== "" && results.length === 0 && !error && (
+            <div
+              style={{
+                marginTop: 20,
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 16,
+                padding: 18,
+                color: "#e2e8f0",
+                textAlign: "center",
+              }}
+            >
+              Aucun résultat trouvé pour cette recherche.
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  );
 }

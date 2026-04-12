@@ -2,20 +2,62 @@
 
 import { useState } from "react";
 
+type SearchResult = {
+  id: string;
+  title: string;
+  year: string | null;
+  language?: string | null;
+  documentType?: string;
+  sourceType?: string;
+  officialUrl: string | null;
+  thumbnailUrl?: string | null;
+  source: string;
+};
+
+type SmartLink = {
+  name: string;
+  url: string;
+};
+
+type SearchResponse = {
+  results?: SearchResult[];
+  smartLinks?: SmartLink[];
+  error?: string;
+};
+
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleSearch(e: any) {
+  async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!query.trim()) return;
+
     setLoading(true);
+    setError("");
+    setResults([]);
+    setSmartLinks([]);
 
-    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-    const data = await res.json();
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const data: SearchResponse = await res.json();
 
-    setResults(data.results || []);
-    setLoading(false);
+      if (!res.ok) {
+        setError(data.error || "Une erreur est survenue.");
+        return;
+      }
+
+      setResults(data.results || []);
+      setSmartLinks(data.smartLinks || []);
+    } catch {
+      setError("Impossible de lancer la recherche.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -45,6 +87,7 @@ export default function SearchPage() {
         <h1 style={{ fontSize: 32, marginBottom: 10 }}>
           HistoriSource 🔎
         </h1>
+
         <p style={{ opacity: 0.7, marginBottom: 20 }}>
           Recherchez des archives historiques mondiales
         </p>
@@ -60,10 +103,13 @@ export default function SearchPage() {
               borderRadius: 8,
               border: "none",
               marginBottom: 10,
+              boxSizing: "border-box",
             }}
           />
 
           <button
+            type="submit"
+            disabled={loading}
             style={{
               width: "100%",
               padding: 12,
@@ -72,14 +118,38 @@ export default function SearchPage() {
               background: "#ec4899",
               color: "white",
               fontWeight: "bold",
-              cursor: "pointer",
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.7 : 1,
             }}
           >
-            Rechercher
+            {loading ? "Recherche..." : "Rechercher"}
           </button>
         </form>
 
-        {loading && <p style={{ marginTop: 20 }}>Recherche...</p>}
+        {error && (
+          <p style={{ marginTop: 20, color: "#fca5a5" }}>
+            {error}
+          </p>
+        )}
+
+        {smartLinks.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <h3 style={{ marginBottom: 10 }}>🔎 Accès direct aux archives</h3>
+
+            {smartLinks.map((link, i) => (
+              <div key={i} style={{ marginBottom: 6 }}>
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "#facc15" }}
+                >
+                  {link.name}
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div style={{ marginTop: 20 }}>
           {results.map((item) => (
@@ -92,15 +162,18 @@ export default function SearchPage() {
                 marginBottom: 10,
               }}
             >
-              <h3>{item.title}</h3>
-              <p style={{ fontSize: 13, opacity: 0.7 }}>
-                {item.source} • {item.year}
+              <h3 style={{ marginTop: 0 }}>{item.title}</h3>
+
+              <p style={{ fontSize: 13, opacity: 0.85 }}>
+                {item.source}
+                {item.year ? ` • ${item.year}` : ""}
               </p>
 
               {item.officialUrl && (
                 <a
                   href={item.officialUrl}
                   target="_blank"
+                  rel="noreferrer"
                   style={{ color: "#38bdf8" }}
                 >
                   Voir le document
