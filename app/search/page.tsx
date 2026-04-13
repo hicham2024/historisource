@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 type SearchResult = {
@@ -317,86 +318,115 @@ export default function SearchPage() {
 
         <section style={{ maxWidth: 980, margin: "30px auto 0" }}>
           <div style={{ display: "grid", gap: 18 }}>
-            {results.map((item) => (
-              <article
-                key={item.id}
-                style={{
-                  background: "rgba(255,255,255,0.96)",
-                  color: "#0f172a",
-                  borderRadius: 18,
-                  padding: 18,
-                  boxShadow: "0 14px 32px rgba(0,0,0,0.2)",
-                }}
-              >
-                <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
-                  {item.thumbnailUrl ? (
-                    <img
-                      src={item.thumbnailUrl}
-                      alt={item.title}
-                      style={{
-                        width: 110,
-                        height: 150,
-                        objectFit: "cover",
-                        borderRadius: 12,
-                        flexShrink: 0,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 110,
-                        height: 150,
-                        borderRadius: 12,
-                        background: "linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)",
-                        flexShrink: 0,
-                      }}
-                    />
-                  )}
+            {results.map((item) => {
+              const detailParams = new URLSearchParams({
+                title: item.title,
+                year: item.year || "",
+                language: item.language || "",
+                documentType: item.documentType || "",
+                sourceType: item.sourceType || "",
+                officialUrl: item.officialUrl || "",
+                thumbnailUrl: item.thumbnailUrl || "",
+                source: item.source,
+              });
 
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ margin: "0 0 10px 0", fontSize: 28 }}>{item.title}</h3>
-
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-                      <span style={badgeStyle("#eef2ff", "#4338ca")}>{item.source}</span>
-                      {item.documentType && (
-                        <span style={badgeStyle("#fdf2f8", "#be185d")}>{item.documentType}</span>
-                      )}
-                      {item.sourceType && (
-                        <span style={badgeStyle("#ecfeff", "#0f766e")}>{item.sourceType}</span>
-                      )}
-                    </div>
-
-                    <p style={{ margin: "6px 0", color: "#334155" }}>
-                      <strong>Date :</strong> {item.year || "Inconnue"}
-                    </p>
-
-                    <p style={{ margin: "6px 0", color: "#334155" }}>
-                      <strong>Langue :</strong> {item.language || "Non renseignée"}
-                    </p>
-
-                    {item.officialUrl && (
-                      <a
-                        href={item.officialUrl}
-                        target="_blank"
-                        rel="noreferrer"
+              return (
+                <article
+                  key={item.id}
+                  style={{
+                    background: "rgba(255,255,255,0.96)",
+                    color: "#0f172a",
+                    borderRadius: 18,
+                    padding: 18,
+                    boxShadow: "0 14px 32px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+                    {item.thumbnailUrl ? (
+                      <img
+                        src={item.thumbnailUrl}
+                        alt={item.title}
                         style={{
-                          display: "inline-block",
-                          marginTop: 12,
-                          background: "linear-gradient(90deg, #2563eb, #3b82f6)",
-                          color: "#fff",
-                          padding: "10px 16px",
+                          width: 110,
+                          height: 150,
+                          objectFit: "cover",
                           borderRadius: 12,
-                          textDecoration: "none",
-                          fontWeight: 800,
+                          flexShrink: 0,
                         }}
-                      >
-                        Ouvrir la source officielle
-                      </a>
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: 110,
+                          height: 150,
+                          borderRadius: 12,
+                          background: "linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)",
+                          flexShrink: 0,
+                        }}
+                      />
                     )}
+
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: "0 0 10px 0", fontSize: 28 }}>{item.title}</h3>
+
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+                        <span style={badgeStyle("#eef2ff", "#4338ca")}>{item.source}</span>
+                        {item.documentType && (
+                          <span style={badgeStyle("#fdf2f8", "#be185d")}>{item.documentType}</span>
+                        )}
+                        {item.sourceType && (
+                          <span style={badgeStyle("#ecfeff", "#0f766e")}>{item.sourceType}</span>
+                        )}
+                      </div>
+
+                      <p style={{ margin: "6px 0", color: "#334155" }}>
+                        <strong>Date :</strong> {item.year || "Inconnue"}
+                      </p>
+
+                      <p style={{ margin: "6px 0", color: "#334155" }}>
+                        <strong>Langue :</strong> {item.language || "Non renseignée"}
+                      </p>
+
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+                        {item.officialUrl && (
+                          <a
+                            href={item.officialUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              display: "inline-block",
+                              background: "linear-gradient(90deg, #2563eb, #3b82f6)",
+                              color: "#fff",
+                              padding: "10px 16px",
+                              borderRadius: 12,
+                              textDecoration: "none",
+                              fontWeight: 800,
+                            }}
+                          >
+                            Ouvrir la source officielle
+                          </a>
+                        )}
+
+                        <Link
+                          href={`/document/${encodeURIComponent(item.id)}?${detailParams.toString()}`}
+                          style={{
+                            display: "inline-block",
+                            background: "linear-gradient(90deg, #7c3aed, #a855f7)",
+                            color: "#fff",
+                            padding: "10px 16px",
+                            borderRadius: 12,
+                            textDecoration: "none",
+                            fontWeight: 800,
+                          }}
+                        >
+                          Voir la fiche
+                        </Link>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
 
           {hasMore && (
