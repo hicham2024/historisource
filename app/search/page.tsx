@@ -151,7 +151,8 @@ export default function SearchPage() {
       setAvailableSources(data.availableSources || ["all"]);
       setAvailableDocumentTypes(data.availableDocumentTypes || ["all"]);
       refreshFavoriteIds(newResults);
-      setError(data.error || "");
+setError("");
+
     } catch {
       setError("Impossible de lancer la recherche.");
     } finally {
@@ -493,8 +494,7 @@ export default function SearchPage() {
           </section>
         )}
 
-        {error && <div style={{ marginTop: 20, color: "#fecaca" }}>{error}</div>}
-
+{error && <div style={{ marginTop: 20, color: "#fecaca" }}>{error}</div>}
         {expandedQueries.length > 0 && (
           <section style={{ maxWidth: 980, margin: "20px auto 0" }}>
             <h2 style={{ fontSize: 22, marginBottom: 12 }}>Requêtes générées</h2>

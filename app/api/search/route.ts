@@ -934,35 +934,34 @@ export async function GET(req: NextRequest) {
 
   const analysis = analyzeHistoricalPrompt(prompt);
 
-  if (!analysis.isHistorical || analysis.confidence < 0.25) {
-    return NextResponse.json({
-      query: prompt,
-      analysis,
-      total: 0,
-      results: [],
-      smartLinks: [],
-      externalPortals: buildExternalPortals(prompt),
-      availableSources: [
-        "all",
-        "Internet Archive",
-        "Gallica / BnF",
-        "Library of Congress",
-        "National Archives (USA)",
-      ],
-      availableDocumentTypes: [
-        "all",
-        "Livre",
-        "Journal",
-        "Manuscrit",
-        "Carte",
-        "Image",
-        "Archive",
-        "Document",
-      ],
-      error:
-        "Cette demande ne semble pas suffisamment historique. Reformule-la comme une recherche historique, archivistique ou bibliographique.",
-    });
-  }
+  if (!analysis.isHistorical) {
+  return NextResponse.json({
+    query: prompt,
+    analysis,
+    total: 0,
+    results: [],
+    topExactMatch: null,
+    smartLinks: buildSmartLinks(prompt, analysis),
+    externalPortals: buildExternalPortals(prompt),
+    availableSources: [
+      "all",
+      "Internet Archive",
+      "Gallica / BnF",
+      "Library of Congress",
+      "National Archives (USA)",
+    ],
+    availableDocumentTypes: [
+      "all",
+      "Livre",
+      "Journal",
+      "Manuscrit",
+      "Carte",
+      "Image",
+      "Archive",
+      "Document",
+    ],
+  });
+}
 
   try {
     const queries = expandPromptQueries(prompt, analysis);
