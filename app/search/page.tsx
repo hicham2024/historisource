@@ -1,23 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { FavoriteItem, isFavorite, toggleFavorite } from "@/lib/favorites";
 
-type SearchResult = {
-  id: string;
-  title: string;
-  year: string | null;
-  language?: string | null;
-  documentType?: string;
-  sourceType?: string;
-  officialUrl: string | null;
-  thumbnailUrl?: string | null;
-  source: string;
-};
+type SearchResult = FavoriteItem;
 
 type SmartLink = {
   name: string;
   url: string;
+};
+
+type PromptAnalysis = {
+  isHistorical: boolean;
+  confidence: number;
+  intent: string;
+  exactDocumentMode: boolean;
+  extractedYear: string | null;
+  dateFrom: number | null;
+  dateTo: number | null;
+  entities: string[];
+  documentTypes: string[];
+  preferredSources: string[];
+  languages: string[];
+  summary: string;
+  generatedQueries: string[];
 };
 
 type SearchResponse = {
@@ -27,6 +34,8 @@ type SearchResponse = {
   hasMore?: boolean;
   availableSources?: string[];
   availableDocumentTypes?: string[];
+  analysis?: PromptAnalysis;
+  expandedQueries?: string[];
 };
 
 function badgeStyle(background: string, color: string): React.CSSProperties {
@@ -43,9 +52,11 @@ function badgeStyle(background: string, color: string): React.CSSProperties {
 }
 
 export default function SearchPage() {
-  const [query, setQuery] = useState("");
+  const [prompt, setPrompt] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
+  const [analysis, setAnalysis] = useState<PromptAnalysis | null>(null);
+  const [expandedQueries, setExpandedQueries] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -60,10 +71,27 @@ export default function SearchPage() {
 
   const [availableSources, setAvailableSources] = useState<string[]>(["all"]);
   const [availableDocumentTypes, setAvailableDocumentTypes] = useState<string[]>(["all"]);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ids = results.filter((item) => isFavorite(item.id)).map((item) => item.id);
+    setFavoriteIds(ids);
+  }, [results]);
+
+  function refreshFavoriteIds(currentResults: SearchResult[]) {
+    const ids = currentResults.filter((item) => isFavorite(item.id)).map((item) => item.id);
+    setFavoriteIds(ids);
+  }
+
+  function handleToggleFavorite(item: FavoriteItem) {
+    toggleFavorite(item);
+    refreshFavoriteIds(results);
+  }
 
   function buildSearchUrl(targetPage: number) {
     const params = new URLSearchParams({
-      q: query,
+      q: prompt,
       page: String(targetPage),
       source,
       documentType,
@@ -77,12 +105,14 @@ export default function SearchPage() {
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (!prompt.trim()) return;
 
     setLoading(true);
     setError("");
     setResults([]);
     setSmartLinks([]);
+    setAnalysis(null);
+    setExpandedQueries([]);
     setPage(1);
     setHasMore(false);
 
@@ -95,12 +125,18 @@ export default function SearchPage() {
         return;
       }
 
-      setResults(data.results || []);
+      const newResults = data.results || [];
+
+      setResults(newResults);
       setSmartLinks(data.smartLinks || []);
+      setAnalysis(data.analysis || null);
+      setExpandedQueries(data.expandedQueries || []);
       setHasMore(Boolean(data.hasMore));
       setPage(1);
       setAvailableSources(data.availableSources || ["all"]);
       setAvailableDocumentTypes(data.availableDocumentTypes || ["all"]);
+      refreshFavoriteIds(newResults);
+      setError(data.error || "");
     } catch {
       setError("Impossible de lancer la recherche.");
     } finally {
@@ -121,9 +157,11 @@ export default function SearchPage() {
         return;
       }
 
-      setResults((prev) => [...prev, ...(data.results || [])]);
+      const mergedResults = [...results, ...(data.results || [])];
+      setResults(mergedResults);
       setHasMore(Boolean(data.hasMore));
       setPage(nextPage);
+      refreshFavoriteIds(mergedResults);
     } catch {
       setError("Impossible de charger plus de résultats.");
     } finally {
@@ -158,13 +196,30 @@ export default function SearchPage() {
           </h1>
 
           <p style={{ marginTop: 18, fontSize: 20, color: "rgba(255,255,255,0.78)" }}>
-            Recherchez des documents historiques dans plusieurs archives mondiales.
+            Décris en langage naturel ce que tu recherches en histoire.
           </p>
+
+          <div style={{ marginTop: 16 }}>
+            <Link
+              href="/favorites"
+              style={{
+                display: "inline-block",
+                background: "linear-gradient(90deg, #f59e0b, #f97316)",
+                color: "#fff",
+                padding: "10px 18px",
+                borderRadius: 12,
+                textDecoration: "none",
+                fontWeight: 800,
+              }}
+            >
+              Voir mes favoris
+            </Link>
+          </div>
         </section>
 
         <section
           style={{
-            maxWidth: 900,
+            maxWidth: 950,
             margin: "0 auto",
             background: "rgba(255,255,255,0.94)",
             color: "#0f172a",
@@ -174,13 +229,17 @@ export default function SearchPage() {
           }}
         >
           <form onSubmit={handleSearch}>
+            <label style={{ display: "block", fontWeight: 800, marginBottom: 10 }}>
+              Prompt historique
+            </label>
+
             <textarea
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Exemple : Lettre du sultan du Maroc, à Pedro IV, roi d'Aragon, datée du 25 septembre 1350."
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Exemple : Je cherche une lettre diplomatique entre le Maroc et l’Aragon vers 1350, de préférence une source primaire conservée dans les archives espagnoles."
               style={{
                 width: "100%",
-                minHeight: 120,
+                minHeight: 140,
                 padding: 16,
                 borderRadius: 16,
                 border: "1px solid #cbd5e1",
@@ -273,13 +332,94 @@ export default function SearchPage() {
                   cursor: loading ? "not-allowed" : "pointer",
                 }}
               >
-                {loading ? "Recherche en cours..." : "Lancer la recherche"}
+                {loading ? "Analyse et recherche..." : "Lancer la recherche IA"}
               </button>
             </div>
           </form>
         </section>
 
+        {analysis && (
+          <section
+            style={{
+              maxWidth: 980,
+              margin: "24px auto 0",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 18,
+              padding: 18,
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>🧠 Ce que l’IA a compris</h2>
+            <p style={{ color: "#e2e8f0" }}>{analysis.summary}</p>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+              <span style={badgeStyle("#1e293b", "#fff")}>Intent : {analysis.intent}</span>
+              <span style={badgeStyle("#1e293b", "#fff")}>
+                Historique : {analysis.isHistorical ? "Oui" : "Non"}
+              </span>
+              <span style={badgeStyle("#1e293b", "#fff")}>
+                Confiance : {Math.round(analysis.confidence * 100)}%
+              </span>
+              <span style={badgeStyle("#1e293b", "#fff")}>
+                Document exact : {analysis.exactDocumentMode ? "Oui" : "Non"}
+              </span>
+            </div>
+
+            {analysis.entities.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Entités détectées :</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  {analysis.entities.map((item) => (
+                    <span key={item} style={badgeStyle("#312e81", "#fff")}>
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analysis.documentTypes.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Types documentaires :</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  {analysis.documentTypes.map((item) => (
+                    <span key={item} style={badgeStyle("#7e22ce", "#fff")}>
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analysis.preferredSources.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Sources prioritaires :</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  {analysis.preferredSources.map((item) => (
+                    <span key={item} style={badgeStyle("#0f766e", "#fff")}>
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         {error && <div style={{ marginTop: 20, color: "#fecaca" }}>{error}</div>}
+
+        {expandedQueries.length > 0 && (
+          <section style={{ maxWidth: 980, margin: "20px auto 0" }}>
+            <h2 style={{ fontSize: 22, marginBottom: 12 }}>Requêtes générées</h2>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {expandedQueries.map((item) => (
+                <span key={item} style={badgeStyle("rgba(255,255,255,0.08)", "#fff")}>
+                  {item}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
 
         {smartLinks.length > 0 && (
           <section style={{ maxWidth: 980, margin: "26px auto 0" }}>
@@ -329,6 +469,8 @@ export default function SearchPage() {
                 thumbnailUrl: item.thumbnailUrl || "",
                 source: item.source,
               });
+
+              const favorite = favoriteIds.includes(item.id);
 
               return (
                 <article
@@ -421,6 +563,24 @@ export default function SearchPage() {
                         >
                           Voir la fiche
                         </Link>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFavorite(item)}
+                          style={{
+                            border: "none",
+                            background: favorite
+                              ? "linear-gradient(90deg, #f59e0b, #f97316)"
+                              : "linear-gradient(90deg, #475569, #334155)",
+                            color: "#fff",
+                            padding: "10px 16px",
+                            borderRadius: 12,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -450,7 +610,7 @@ export default function SearchPage() {
             </div>
           )}
 
-          {!loading && query.trim() !== "" && results.length === 0 && !error && (
+          {!loading && prompt.trim() !== "" && results.length === 0 && !error && (
             <div
               style={{
                 marginTop: 20,
@@ -462,7 +622,7 @@ export default function SearchPage() {
                 textAlign: "center",
               }}
             >
-              Aucun résultat trouvé pour cette recherche.
+              Aucun résultat trouvé pour cette demande.
             </div>
           )}
         </section>

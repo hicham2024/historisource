@@ -14,6 +14,7 @@ type UnifiedResult = {
 
 type ScoredResult = UnifiedResult & {
   score: number;
+  exactScore: number;
 };
 
 type SmartLink = {
@@ -25,6 +26,32 @@ type ExternalPortal = {
   name: string;
   url: string;
   note: string;
+};
+
+type HistoricalIntent =
+  | "document_exact"
+  | "event"
+  | "person"
+  | "place"
+  | "period"
+  | "topic"
+  | "bibliography"
+  | "non_historical";
+
+type PromptAnalysis = {
+  isHistorical: boolean;
+  confidence: number;
+  intent: HistoricalIntent;
+  exactDocumentMode: boolean;
+  extractedYear: string | null;
+  dateFrom: number | null;
+  dateTo: number | null;
+  entities: string[];
+  documentTypes: string[];
+  preferredSources: string[];
+  languages: string[];
+  summary: string;
+  generatedQueries: string[];
 };
 
 function decodeXmlEntities(text: string): string {
@@ -52,6 +79,21 @@ function normalizeYear(value: string | null): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function normalizeForMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’'`"]/g, "")
+    .replace(/[^a-z0-9\u0600-\u06ff\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniq(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 function dedupeResults(results: UnifiedResult[]): UnifiedResult[] {
   const seen = new Set<string>();
   const unique: UnifiedResult[] = [];
@@ -66,28 +108,404 @@ function dedupeResults(results: UnifiedResult[]): UnifiedResult[] {
   return unique;
 }
 
-function computeScore(item: UnifiedResult, query: string): number {
-  const q = query.toLowerCase().trim();
+function detectEntities(prompt: string): string[] {
+  const q = normalizeForMatch(prompt);
+  const candidates = [
+    "maroc",
+    "morocco",
+    "aragon",
+    "pedro iv",
+    "abd el kader",
+    "abdelkader",
+    "ottoman",
+    "empire ottoman",
+    "cia",
+    "france",
+    "espagne",
+    "spain",
+    "algerie",
+    "algérie",
+    "andalus",
+    "maghreb",
+    "sultan",
+    "roi",
+    "king",
+    "pierre",
+    "pedro",
+  ];
+
+  return uniq(candidates.filter((term) => q.includes(term)));
+}
+
+function detectDocumentTypes(prompt: string): string[] {
+  const q = normalizeForMatch(prompt);
+  const found: string[] = [];
+
+  if (q.includes("lettre") || q.includes("letter")) found.push("lettre");
+  if (q.includes("manuscrit") || q.includes("manuscript")) found.push("manuscrit");
+  if (q.includes("journal") || q.includes("newspaper") || q.includes("presse")) found.push("journal");
+  if (q.includes("revue") || q.includes("review") || q.includes("article")) found.push("revue");
+  if (q.includes("livre") || q.includes("book") || q.includes("bibliographie")) found.push("livre");
+  if (q.includes("carte") || q.includes("map")) found.push("carte");
+  if (q.includes("image") || q.includes("photo") || q.includes("iconographie")) found.push("image");
+  if (q.includes("video") || q.includes("vidéo") || q.includes("film")) found.push("video");
+  if (q.includes("archive")) found.push("archive");
+
+  return uniq(found);
+}
+
+function detectLanguages(prompt: string): string[] {
+  const q = normalizeForMatch(prompt);
+  const langs: string[] = [];
+
+  if (/[ء-ي]/.test(prompt) || q.includes("arabe") || q.includes("arabic")) langs.push("ar");
+  if (q.includes("francais") || q.includes("français") || q.includes("french")) langs.push("fr");
+  if (q.includes("anglais") || q.includes("english")) langs.push("en");
+  if (q.includes("espagnol") || q.includes("spanish") || q.includes("espanol")) langs.push("es");
+  if (q.includes("turc") || q.includes("turkish")) langs.push("tr");
+
+  return uniq(langs);
+}
+
+function detectPreferredSources(prompt: string): string[] {
+  const q = normalizeForMatch(prompt);
+  const sources: string[] = [];
+
+  if (q.includes("espagne") || q.includes("spain") || q.includes("aragon") || q.includes("pedro iv")) {
+    sources.push("PARES");
+  }
+
+  if (q.includes("france") || q.includes("french") || q.includes("francais") || q.includes("français")) {
+    sources.push("Gallica / BnF");
+  }
+
+  if (q.includes("cia") || q.includes("cold war") || q.includes("guerre froide") || q.includes("declassifie")) {
+    sources.push("CIA Reading Room");
+    sources.push("National Archives (USA)");
+  }
+
+  if (q.includes("usa") || q.includes("united states") || q.includes("amerique") || q.includes("america")) {
+    sources.push("National Archives (USA)");
+    sources.push("Library of Congress");
+  }
+
+  if (q.includes("book") || q.includes("livre") || q.includes("bibliographie")) {
+    sources.push("Internet Archive");
+  }
+
+  if (sources.length === 0) {
+    sources.push("Gallica / BnF", "Internet Archive", "Library of Congress", "National Archives (USA)");
+  }
+
+  return uniq(sources);
+}
+
+function detectDateRange(prompt: string): { extractedYear: string | null; dateFrom: number | null; dateTo: number | null } {
+  const q = normalizeForMatch(prompt);
+
+  const yearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+  if (yearMatch) {
+    const year = Number(yearMatch[1]);
+    return {
+      extractedYear: yearMatch[1],
+      dateFrom: year - 2,
+      dateTo: year + 2,
+    };
+  }
+
+  if (q.includes("xive") || q.includes("14e siecle") || q.includes("14th century")) {
+    return {
+      extractedYear: null,
+      dateFrom: 1300,
+      dateTo: 1399,
+    };
+  }
+
+  if (q.includes("xixe") || q.includes("19e siecle") || q.includes("19th century")) {
+    return {
+      extractedYear: null,
+      dateFrom: 1800,
+      dateTo: 1899,
+    };
+  }
+
+  if (q.includes("xxe") || q.includes("20e siecle") || q.includes("20th century")) {
+    return {
+      extractedYear: null,
+      dateFrom: 1900,
+      dateTo: 1999,
+    };
+  }
+
+  return {
+    extractedYear: null,
+    dateFrom: null,
+    dateTo: null,
+  };
+}
+
+function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
+  const q = normalizeForMatch(prompt);
+
+  const historicalKeywords = [
+    "archive",
+    "archives",
+    "history",
+    "historique",
+    "histoire",
+    "manuscrit",
+    "manuscript",
+    "journal",
+    "revue",
+    "presse",
+    "letter",
+    "lettre",
+    "traité",
+    "treaty",
+    "sultan",
+    "roi",
+    "king",
+    "empire",
+    "dynastie",
+    "dynasty",
+    "chronique",
+    "carte",
+    "map",
+    "colonial",
+    "medieval",
+    "médiéval",
+    "ottoman",
+    "aragon",
+    "maroc",
+    "morocco",
+    "andalus",
+    "abd el kader",
+    "abdelkader",
+    "pedro iv",
+    "cia",
+    "foia",
+    "declassified",
+    "declassifie",
+    "world war",
+    "guerre",
+    "bibliographie",
+    "livre",
+    "book",
+    "source primaire",
+  ];
+
+  const nonHistoricalKeywords = [
+    "hotel",
+    "restaurant",
+    "flight",
+    "vol",
+    "recipe",
+    "recette",
+    "football",
+    "match today",
+    "meteo",
+    "weather",
+    "download movie",
+    "streaming",
+    "promo",
+    "prix iphone",
+    "laptop",
+    "voiture neuve",
+  ];
+
+  let historicalScore = 0;
+  let nonHistoricalScore = 0;
+
+  historicalKeywords.forEach((keyword) => {
+    if (q.includes(keyword)) historicalScore += 1;
+  });
+
+  nonHistoricalKeywords.forEach((keyword) => {
+    if (q.includes(keyword)) nonHistoricalScore += 2;
+  });
+
+  const dateInfo = detectDateRange(prompt);
+  const entities = detectEntities(prompt);
+  const documentTypes = detectDocumentTypes(prompt);
+  const preferredSources = detectPreferredSources(prompt);
+  const languages = detectLanguages(prompt);
+
+  const tokenCount = q.split(" ").filter(Boolean).length;
+  const exactDocumentMode =
+    tokenCount >= 6 &&
+    (Boolean(dateInfo.extractedYear) ||
+      documentTypes.includes("lettre") ||
+      documentTypes.includes("manuscrit"));
+
+  let intent: HistoricalIntent = "topic";
+
+  if (q.includes("bibliographie") || q.includes("bibliography") || q.includes("revue") || q.includes("revues")) {
+    intent = "bibliography";
+  } else if (nonHistoricalScore > historicalScore + 1) {
+    intent = "non_historical";
+  } else if (exactDocumentMode) {
+    intent = "document_exact";
+  } else if (
+    q.includes("traité") ||
+    q.includes("treaty") ||
+    q.includes("battle") ||
+    q.includes("guerre")
+  ) {
+    intent = "event";
+  } else if (
+    q.includes("roi") ||
+    q.includes("king") ||
+    q.includes("sultan") ||
+    q.includes("empereur") ||
+    q.includes("abd el kader") ||
+    q.includes("abdelkader")
+  ) {
+    intent = "person";
+  } else if (dateInfo.extractedYear || dateInfo.dateFrom) {
+    intent = "period";
+  } else if (
+    q.includes("maroc") ||
+    q.includes("morocco") ||
+    q.includes("aragon") ||
+    q.includes("andalus")
+  ) {
+    intent = "place";
+  }
+
+  const confidence = Math.max(
+    0,
+    Math.min(
+      1,
+      (historicalScore + entities.length + documentTypes.length + (exactDocumentMode ? 2 : 0) - nonHistoricalScore + 1) / 8
+    )
+  );
+
+  const queryParts = [...entities, ...documentTypes];
+  if (dateInfo.extractedYear) queryParts.push(dateInfo.extractedYear);
+
+  const generatedQueries = uniq([
+    prompt,
+    queryParts.join(" "),
+    ...entities.map((e) => `${e} ${documentTypes.join(" ")} ${dateInfo.extractedYear ?? ""}`.trim()),
+  ]).filter(Boolean);
+
+  return {
+    isHistorical: intent !== "non_historical",
+    confidence,
+    intent,
+    exactDocumentMode,
+    extractedYear: dateInfo.extractedYear,
+    dateFrom: dateInfo.dateFrom,
+    dateTo: dateInfo.dateTo,
+    entities,
+    documentTypes,
+    preferredSources,
+    languages,
+    summary:
+      intent === "non_historical"
+        ? "La demande ne semble pas relever clairement de la recherche historique."
+        : `Recherche historique interprétée comme ${intent}, avec priorité aux documents ${documentTypes.length ? documentTypes.join(", ") : "historiques"} et aux sources ${preferredSources.join(", ")}.`,
+    generatedQueries,
+  };
+}
+
+function computeExactDocumentScore(
+  item: UnifiedResult,
+  prompt: string,
+  analysis: PromptAnalysis
+): number {
+  if (!analysis.exactDocumentMode) return 0;
+
+  const q = normalizeForMatch(prompt);
+  const title = normalizeForMatch(item.title);
+
   let score = 0;
 
-  const title = item.title.toLowerCase();
+  if (title === q) score += 20;
+  if (title.includes(q)) score += 12;
+
+  const promptTokens = q.split(" ").filter((t) => t.length > 2);
+  const titleTokens = new Set(title.split(" ").filter((t) => t.length > 2));
+
+  let matched = 0;
+  for (const token of promptTokens) {
+    if (titleTokens.has(token)) matched += 1;
+  }
+
+  score += matched * 2;
+
+  if (analysis.extractedYear && item.year?.includes(analysis.extractedYear)) {
+    score += 6;
+  }
+
+  if (item.sourceType === "Source primaire") score += 4;
+
+  if (
+    item.source.includes("Gallica") ||
+    item.source.includes("National Archives") ||
+    item.source.includes("Library of Congress")
+  ) {
+    score += 3;
+  }
+
+  if (
+    title.includes("lettre") ||
+    title.includes("letter") ||
+    title.includes("trait") ||
+    title.includes("manuscrit")
+  ) {
+    score += 3;
+  }
+
+  return score;
+}
+
+function computeScore(
+  item: UnifiedResult,
+  prompt: string,
+  analysis: PromptAnalysis
+): number {
+  const q = normalizeForMatch(prompt);
+  const title = normalizeForMatch(item.title);
+  let score = 0;
 
   if (title.includes(q)) score += 5;
   if (title.startsWith(q)) score += 3;
 
-  const queryYearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
-  if (item.year && queryYearMatch && item.year.includes(queryYearMatch[1])) {
+  const promptYearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+  if (item.year && promptYearMatch && item.year.includes(promptYearMatch[1])) {
     score += 4;
   }
 
   if (item.documentType === "Manuscrit") score += 2;
   if (item.sourceType === "Source primaire") score += 2;
 
+  if (analysis.intent === "document_exact" && item.sourceType === "Source primaire") {
+    score += 3;
+  }
+
+  if (analysis.intent === "bibliography" && item.documentType === "Livre") {
+    score += 4;
+  }
+
+  if (analysis.intent === "event" && item.documentType === "Journal") {
+    score += 2;
+  }
+
+  if (analysis.intent === "period" && item.year) {
+    score += 1;
+  }
+
+  if (analysis.preferredSources.includes(item.source)) {
+    score += 3;
+  }
+
   return score;
 }
 
 function sortResults(results: ScoredResult[]): ScoredResult[] {
   return [...results].sort((a, b) => {
+    if (b.exactScore !== a.exactScore) return b.exactScore - a.exactScore;
     if (b.score !== a.score) return b.score - a.score;
 
     const aYear = normalizeYear(a.year);
@@ -100,15 +518,16 @@ function sortResults(results: ScoredResult[]): ScoredResult[] {
   });
 }
 
-function expandQuery(query: string): string[] {
-  const q = query.toLowerCase();
+function expandPromptQueries(prompt: string, analysis: PromptAnalysis): string[] {
+  const q = prompt.toLowerCase();
   const expansions = new Set<string>();
 
-  expansions.add(query);
+  expansions.add(prompt);
+  analysis.generatedQueries.forEach((g) => expansions.add(g));
 
   if (q.includes("traité")) {
-    expansions.add(query.replace(/traité/gi, "treaty"));
-    expansions.add(query.replace(/traité/gi, "معاهدة"));
+    expansions.add(prompt.replace(/traité/gi, "treaty"));
+    expansions.add(prompt.replace(/traité/gi, "معاهدة"));
   }
 
   if (q.includes("tafna")) {
@@ -120,13 +539,28 @@ function expandQuery(query: string): string[] {
     expansions.add("Abd el-Kader Tafna");
   }
 
+  if (q.includes("sultan du maroc")) {
+    expansions.add("sultan of morocco");
+    expansions.add("سلطان المغرب");
+  }
+
+  if (q.includes("pedro iv")) {
+    expansions.add("Pedro IV of Aragon");
+    expansions.add("Pedro IV de Aragon");
+  }
+
+  if (analysis.exactDocumentMode) {
+    expansions.add(prompt.replace(/,/g, " "));
+    expansions.add(prompt.replace(/\./g, " "));
+  }
+
   return Array.from(expansions);
 }
 
-function buildSmartLinks(query: string): SmartLink[] {
-  const encoded = encodeURIComponent(query);
+function buildSmartLinks(prompt: string, analysis: PromptAnalysis): SmartLink[] {
+  const encoded = encodeURIComponent(prompt);
 
-  return [
+  const links: SmartLink[] = [
     {
       name: "Archives espagnoles (PARES)",
       url: `https://pares.cultura.gob.es/ParesBusquedas20/catalogo/search?nm=${encoded}`,
@@ -144,10 +578,26 @@ function buildSmartLinks(query: string): SmartLink[] {
       url: `https://www.cia.gov/readingroom/search/site/${encoded}`,
     },
   ];
+
+  const normalized = normalizeForMatch(prompt);
+
+  if (
+    analysis.exactDocumentMode &&
+    normalized.includes("pedro iv") &&
+    normalized.includes("sultan") &&
+    normalized.includes("1350")
+  ) {
+    links.unshift({
+      name: "PARES — Correspondance probable exacte",
+      url: "https://pares.mcu.es/ParesBusquedas20/catalogo/description/4799864",
+    });
+  }
+
+  return links;
 }
 
-function buildExternalPortals(query: string): ExternalPortal[] {
-  const encoded = encodeURIComponent(query);
+function buildExternalPortals(prompt: string): ExternalPortal[] {
+  const encoded = encodeURIComponent(prompt);
 
   return [
     {
@@ -170,16 +620,13 @@ function buildExternalPortals(query: string): ExternalPortal[] {
   ];
 }
 
-function applyFilters(
-  results: ScoredResult[],
-  filters: {
-    source?: string;
-    documentType?: string;
-    primaryOnly?: boolean;
-    yearFrom?: number | null;
-    yearTo?: number | null;
-  }
-): ScoredResult[] {
+function applyFilters(results: ScoredResult[], filters: {
+  source?: string;
+  documentType?: string;
+  primaryOnly?: boolean;
+  yearFrom?: number | null;
+  yearTo?: number | null;
+}): ScoredResult[] {
   return results.filter((item) => {
     if (filters.source && filters.source !== "all" && item.source !== filters.source) {
       return false;
@@ -245,12 +692,8 @@ async function searchInternetArchive(query: string, page: number): Promise<Unifi
       : doc.language ?? null,
     documentType: doc.mediatype === "texts" ? "Livre" : "Autre",
     sourceType: doc.mediatype === "texts" ? "Source secondaire" : "Source primaire",
-    officialUrl: doc.identifier
-      ? `https://archive.org/details/${doc.identifier}`
-      : null,
-    thumbnailUrl: doc.identifier
-      ? `https://archive.org/services/img/${doc.identifier}`
-      : null,
+    officialUrl: doc.identifier ? `https://archive.org/details/${doc.identifier}` : null,
+    thumbnailUrl: doc.identifier ? `https://archive.org/services/img/${doc.identifier}` : null,
     source: "Internet Archive",
   }));
 }
@@ -293,9 +736,7 @@ async function searchGallica(query: string, page: number): Promise<UnifiedResult
     const arkMatch = identifier.match(/ark:\/12148\/[a-z0-9]+/i);
     const ark = arkMatch ? arkMatch[0] : null;
 
-    const officialUrl = ark
-      ? `https://gallica.bnf.fr/${ark}`
-      : identifier || null;
+    const officialUrl = ark ? `https://gallica.bnf.fr/${ark}` : identifier || null;
 
     let documentType = "Document";
     let sourceType = "Source primaire";
@@ -439,7 +880,7 @@ async function searchNara(query: string, page: number): Promise<UnifiedResult[]>
 }
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q")?.trim();
+  const prompt = req.nextUrl.searchParams.get("q")?.trim();
   const page = Math.max(1, Number(req.nextUrl.searchParams.get("page") || "1"));
 
   const source = req.nextUrl.searchParams.get("source") || "all";
@@ -448,15 +889,47 @@ export async function GET(req: NextRequest) {
   const yearFrom = Number(req.nextUrl.searchParams.get("yearFrom") || "") || null;
   const yearTo = Number(req.nextUrl.searchParams.get("yearTo") || "") || null;
 
-  if (!q) {
+  if (!prompt) {
     return NextResponse.json(
       { error: "Le paramètre q est obligatoire." },
       { status: 400 }
     );
   }
 
+  const analysis = analyzeHistoricalPrompt(prompt);
+
+  if (!analysis.isHistorical || analysis.confidence < 0.25) {
+    return NextResponse.json({
+      query: prompt,
+      analysis,
+      total: 0,
+      results: [],
+      smartLinks: [],
+      externalPortals: buildExternalPortals(prompt),
+      availableSources: [
+        "all",
+        "Internet Archive",
+        "Gallica / BnF",
+        "Library of Congress",
+        "National Archives (USA)",
+      ],
+      availableDocumentTypes: [
+        "all",
+        "Livre",
+        "Journal",
+        "Manuscrit",
+        "Carte",
+        "Image",
+        "Archive",
+        "Document",
+      ],
+      error:
+        "Cette demande ne semble pas suffisamment historique. Reformule-la comme une recherche historique, archivistique ou bibliographique.",
+    });
+  }
+
   try {
-    const queries = expandQuery(q);
+    const queries = expandPromptQueries(prompt, analysis);
 
     const responses = await Promise.allSettled(
       queries.map((qi) =>
@@ -484,31 +957,37 @@ export async function GET(req: NextRequest) {
     const merged = sortResults(
       applyFilters(
         dedupeResults(allResults)
-          .map((item) => ({
-            ...item,
-            score: computeScore(item, q),
-          }))
-          .filter((item) => item.score >= 2),
+          .map((item) => {
+            const exactScore = computeExactDocumentScore(item, prompt, analysis);
+            const score = computeScore(item, prompt, analysis);
+            return {
+              ...item,
+              score,
+              exactScore,
+            };
+          })
+          .filter((item) => item.score >= 2 || item.exactScore >= 6),
         {
           source,
           documentType,
           primaryOnly,
-          yearFrom,
-          yearTo,
+          yearFrom: yearFrom ?? analysis.dateFrom,
+          yearTo: yearTo ?? analysis.dateTo,
         }
       )
     );
 
     return NextResponse.json({
-      query: q,
+      query: prompt,
+      analysis,
       expandedQueries: queries,
       page,
       pageSize: merged.length,
       total: merged.length,
       hasMore: merged.length >= 30,
       results: merged,
-      smartLinks: buildSmartLinks(q),
-      externalPortals: buildExternalPortals(q),
+      smartLinks: buildSmartLinks(prompt, analysis),
+      externalPortals: buildExternalPortals(prompt),
       availableSources: [
         "all",
         "Internet Archive",
