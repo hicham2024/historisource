@@ -8,6 +8,8 @@ export type FavoriteItem = {
   officialUrl: string | null;
   thumbnailUrl?: string | null;
   source: string;
+  relevanceLabel?: "Très pertinent" | "Pertinent" | "Connexe";
+  historicalSummary?: string;
 };
 
 const STORAGE_KEY = "historisource_favorites";
@@ -18,7 +20,7 @@ export function getFavorites(): FavoriteItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    return JSON.parse(raw) as FavoriteItem[];
   } catch {
     return [];
   }
@@ -30,22 +32,20 @@ export function saveFavorites(items: FavoriteItem[]) {
 }
 
 export function isFavorite(id: string): boolean {
+  return getFavorites().some((item) => item.id === id);
+}
+
+export function addFavorite(item: FavoriteItem) {
   const favorites = getFavorites();
-  return favorites.some((item) => item.id === id);
+  if (favorites.some((fav) => fav.id === item.id)) return;
+  saveFavorites([item, ...favorites]);
+}
+
+export function removeFavorite(id: string) {
+  saveFavorites(getFavorites().filter((item) => item.id !== id));
 }
 
 export function toggleFavorite(item: FavoriteItem) {
-  const favorites = getFavorites();
-
-  const exists = favorites.find((f) => f.id === item.id);
-
-  let updated;
-
-  if (exists) {
-    updated = favorites.filter((f) => f.id !== item.id);
-  } else {
-    updated = [item, ...favorites];
-  }
-
-  saveFavorites(updated);
+  if (isFavorite(item.id)) removeFavorite(item.id);
+  else addFavorite(item);
 }

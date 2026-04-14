@@ -15,6 +15,8 @@ type UnifiedResult = {
 type ScoredResult = UnifiedResult & {
   score: number;
   exactScore: number;
+  relevanceLabel: "Très pertinent" | "Pertinent" | "Connexe";
+  historicalSummary: string;
 };
 
 type SmartLink = {
@@ -244,34 +246,18 @@ function detectDateRange(prompt: string): {
   }
 
   if (q.includes("xive") || q.includes("14e siecle") || q.includes("14th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1300,
-      dateTo: 1399,
-    };
+    return { extractedYear: null, dateFrom: 1300, dateTo: 1399 };
   }
 
   if (q.includes("xixe") || q.includes("19e siecle") || q.includes("19th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1800,
-      dateTo: 1899,
-    };
+    return { extractedYear: null, dateFrom: 1800, dateTo: 1899 };
   }
 
   if (q.includes("xxe") || q.includes("20e siecle") || q.includes("20th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1900,
-      dateTo: 1999,
-    };
+    return { extractedYear: null, dateFrom: 1900, dateTo: 1999 };
   }
 
-  return {
-    extractedYear: null,
-    dateFrom: null,
-    dateTo: null,
-  };
+  return { extractedYear: null, dateFrom: null, dateTo: null };
 }
 
 function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
@@ -533,6 +519,41 @@ function computeScore(
   }
 
   return score;
+}
+
+function getRelevanceLabel(item: { score: number; exactScore: number }): "Très pertinent" | "Pertinent" | "Connexe" {
+  const total = item.score + item.exactScore;
+  if (item.exactScore >= 10 || total >= 16) return "Très pertinent";
+  if (item.exactScore >= 4 || total >= 9) return "Pertinent";
+  return "Connexe";
+}
+
+function buildHistoricalSummary(item: UnifiedResult): string {
+  const parts: string[] = [];
+
+  parts.push(
+    item.sourceType === "Source primaire"
+      ? "Source primaire"
+      : "Source secondaire"
+  );
+
+  if (item.documentType) {
+    parts.push(item.documentType.toLowerCase());
+  }
+
+  if (item.year) {
+    parts.push(`daté${item.documentType === "Carte" ? "e" : ""} de ${item.year}`);
+  } else {
+    parts.push("sans date précise dans les métadonnées");
+  }
+
+  if (item.language) {
+    parts.push(`en langue ${item.language}`);
+  }
+
+  parts.push(`conservé${item.documentType === "Carte" ? "e" : ""} via ${item.source}`);
+
+  return parts.join(", ") + ".";
 }
 
 function sortResults(results: ScoredResult[]): ScoredResult[] {
@@ -940,6 +961,7 @@ export async function GET(req: NextRequest) {
       analysis,
       total: 0,
       results: [],
+      topExactMatch: null,
       smartLinks: [],
       externalPortals: buildExternalPortals(prompt),
       availableSources: [
@@ -1000,6 +1022,8 @@ export async function GET(req: NextRequest) {
               ...item,
               score,
               exactScore,
+              relevanceLabel: getRelevanceLabel({ score, exactScore }),
+              historicalSummary: buildHistoricalSummary(item),
             };
           })
           .filter((item) => item.score >= 2 || item.exactScore >= 6),
@@ -1013,6 +1037,11 @@ export async function GET(req: NextRequest) {
       )
     );
 
+    const topExactMatch =
+      analysis.exactDocumentMode && merged.length > 0 && merged[0].exactScore >= 8
+        ? merged[0]
+        : null;
+
     return NextResponse.json({
       query: prompt,
       analysis,
@@ -1022,6 +1051,7 @@ export async function GET(req: NextRequest) {
       total: merged.length,
       hasMore: merged.length >= 30,
       results: merged,
+      topExactMatch,
       smartLinks: buildSmartLinks(prompt, analysis),
       externalPortals: buildExternalPortals(prompt),
       availableSources: [

@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FavoriteItem, isFavorite, toggleFavorite } from "@/lib/favorites";
 
-type SearchResult = FavoriteItem;
+type SearchResult = FavoriteItem & {
+  score?: number;
+  exactScore?: number;
+  relevanceLabel?: "Très pertinent" | "Pertinent" | "Connexe";
+  historicalSummary?: string;
+};
 
 type SmartLink = {
   name: string;
@@ -36,6 +41,7 @@ type SearchResponse = {
   availableDocumentTypes?: string[];
   analysis?: PromptAnalysis;
   expandedQueries?: string[];
+  topExactMatch?: SearchResult | null;
 };
 
 function badgeStyle(background: string, color: string): React.CSSProperties {
@@ -51,12 +57,19 @@ function badgeStyle(background: string, color: string): React.CSSProperties {
   };
 }
 
+function relevanceStyle(label?: string): React.CSSProperties {
+  if (label === "Très pertinent") return badgeStyle("#dcfce7", "#166534");
+  if (label === "Pertinent") return badgeStyle("#fef3c7", "#92400e");
+  return badgeStyle("#e2e8f0", "#334155");
+}
+
 export default function SearchPage() {
   const [prompt, setPrompt] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
   const [analysis, setAnalysis] = useState<PromptAnalysis | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<string[]>([]);
+  const [topExactMatch, setTopExactMatch] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -113,6 +126,7 @@ export default function SearchPage() {
     setSmartLinks([]);
     setAnalysis(null);
     setExpandedQueries([]);
+    setTopExactMatch(null);
     setPage(1);
     setHasMore(false);
 
@@ -131,6 +145,7 @@ export default function SearchPage() {
       setSmartLinks(data.smartLinks || []);
       setAnalysis(data.analysis || null);
       setExpandedQueries(data.expandedQueries || []);
+      setTopExactMatch(data.topExactMatch || null);
       setHasMore(Boolean(data.hasMore));
       setPage(1);
       setAvailableSources(data.availableSources || ["all"]);
@@ -349,11 +364,11 @@ export default function SearchPage() {
               padding: 18,
             }}
           >
-            <h2 style={{ marginTop: 0 }}>🧠 Ce que l’IA a compris</h2>
+            <h2 style={{ marginTop: 0 }}>🧠 Analyse IA de votre recherche</h2>
             <p style={{ color: "#e2e8f0" }}>{analysis.summary}</p>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
-              <span style={badgeStyle("#1e293b", "#fff")}>Intent : {analysis.intent}</span>
+              <span style={badgeStyle("#1e293b", "#fff")}>Type : {analysis.intent}</span>
               <span style={badgeStyle("#1e293b", "#fff")}>
                 Historique : {analysis.isHistorical ? "Oui" : "Non"}
               </span>
@@ -402,6 +417,78 @@ export default function SearchPage() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {analysis.languages.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Langues détectées :</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  {analysis.languages.map((item) => (
+                    <span key={item} style={badgeStyle("#0f172a", "#e2e8f0")}>
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {topExactMatch && (
+          <section
+            style={{
+              maxWidth: 980,
+              margin: "20px auto 0",
+              background: "rgba(34,197,94,0.15)",
+              border: "1px solid rgba(34,197,94,0.35)",
+              borderRadius: 18,
+              padding: 18,
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>🎯 Document probable trouvé</h2>
+            <h3 style={{ marginBottom: 8 }}>{topExactMatch.title}</h3>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <span style={badgeStyle("#dcfce7", "#166534")}>
+                {topExactMatch.relevanceLabel || "Très pertinent"}
+              </span>
+              <span style={badgeStyle("#eef2ff", "#4338ca")}>{topExactMatch.source}</span>
+              {topExactMatch.year && (
+                <span style={badgeStyle("#f8fafc", "#334155")}>{topExactMatch.year}</span>
+              )}
+            </div>
+
+            {topExactMatch.historicalSummary && (
+              <p
+                style={{
+                  marginTop: 12,
+                  color: "#e2e8f0",
+                  background: "rgba(255,255,255,0.06)",
+                  padding: 12,
+                  borderRadius: 12,
+                }}
+              >
+                {topExactMatch.historicalSummary}
+              </p>
+            )}
+
+            {topExactMatch.officialUrl && (
+              <a
+                href={topExactMatch.officialUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: "inline-block",
+                  marginTop: 12,
+                  background: "linear-gradient(90deg, #16a34a, #22c55e)",
+                  color: "#fff",
+                  padding: "10px 16px",
+                  borderRadius: 12,
+                  textDecoration: "none",
+                  fontWeight: 800,
+                }}
+              >
+                Ouvrir la source officielle
+              </a>
             )}
           </section>
         )}
@@ -519,6 +606,11 @@ export default function SearchPage() {
                         {item.sourceType && (
                           <span style={badgeStyle("#ecfeff", "#0f766e")}>{item.sourceType}</span>
                         )}
+                        {item.relevanceLabel && (
+                          <span style={relevanceStyle(item.relevanceLabel)}>
+                            {item.relevanceLabel}
+                          </span>
+                        )}
                       </div>
 
                       <p style={{ margin: "6px 0", color: "#334155" }}>
@@ -528,6 +620,20 @@ export default function SearchPage() {
                       <p style={{ margin: "6px 0", color: "#334155" }}>
                         <strong>Langue :</strong> {item.language || "Non renseignée"}
                       </p>
+
+                      {item.historicalSummary && (
+                        <p
+                          style={{
+                            marginTop: 10,
+                            color: "#475569",
+                            background: "#f8fafc",
+                            padding: 12,
+                            borderRadius: 12,
+                          }}
+                        >
+                          {item.historicalSummary}
+                        </p>
+                      )}
 
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
                         {item.officialUrl && (
