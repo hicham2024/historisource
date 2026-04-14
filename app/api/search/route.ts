@@ -1044,9 +1044,32 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("Erreur API search:", error);
 
-    return NextResponse.json(
-      { error: "Impossible de contacter les archives en ligne." },
-      { status: 500 }
-    );
+    return NextResponse.json({
+  query: prompt,
+  analysis,
+  total: 0,
+  results: [],
+  topExactMatch: null,
+  smartLinks: buildSmartLinks(prompt, analysis),
+  externalPortals: buildExternalPortals(prompt),
+  availableSources: [
+    "all",
+    "Internet Archive",
+    "Gallica / BnF",
+    "Library of Congress",
+    "National Archives (USA)",
+  ],
+  availableDocumentTypes: [
+    "all",
+    "Livre",
+    "Journal",
+    "Manuscrit",
+    "Carte",
+    "Image",
+    "Archive",
+    "Document",
+  ],
+  error: "Aucun résultat direct trouvé avec les filtres actuels.",
+});
   }
 }

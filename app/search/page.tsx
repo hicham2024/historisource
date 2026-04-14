@@ -494,7 +494,21 @@ setError("");
           </section>
         )}
 
-{error && <div style={{ marginTop: 20, color: "#fecaca" }}>{error}</div>}
+{error && (
+  <div
+    style={{
+      marginTop: 20,
+      background: "rgba(255,255,255,0.08)",
+      border: "1px solid rgba(255,255,255,0.15)",
+      borderRadius: 12,
+      padding: 12,
+      color: "#e2e8f0",
+      fontSize: 14,
+    }}
+  >
+    {error}
+  </div>
+)}
         {expandedQueries.length > 0 && (
           <section style={{ maxWidth: 980, margin: "20px auto 0" }}>
             <h2 style={{ fontSize: 22, marginBottom: 12 }}>Requêtes générées</h2>
