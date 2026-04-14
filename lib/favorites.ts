@@ -8,8 +8,6 @@ export type FavoriteItem = {
   officialUrl: string | null;
   thumbnailUrl?: string | null;
   source: string;
-  relevanceLabel?: "Très pertinent" | "Pertinent" | "Connexe";
-  historicalSummary?: string;
 };
 
 const STORAGE_KEY = "historisource_favorites";
@@ -32,20 +30,29 @@ export function saveFavorites(items: FavoriteItem[]) {
 }
 
 export function isFavorite(id: string): boolean {
-  return getFavorites().some((item) => item.id === id);
+  const favorites = getFavorites();
+  return favorites.some((item) => item.id === id);
 }
 
 export function addFavorite(item: FavoriteItem) {
   const favorites = getFavorites();
+
   if (favorites.some((fav) => fav.id === item.id)) return;
-  saveFavorites([item, ...favorites]);
+
+  const updated = [item, ...favorites];
+  saveFavorites(updated);
 }
 
 export function removeFavorite(id: string) {
-  saveFavorites(getFavorites().filter((item) => item.id !== id));
+  const favorites = getFavorites();
+  const updated = favorites.filter((item) => item.id !== id);
+  saveFavorites(updated);
 }
 
 export function toggleFavorite(item: FavoriteItem) {
-  if (isFavorite(item.id)) removeFavorite(item.id);
-  else addFavorite(item);
+  if (isFavorite(item.id)) {
+    removeFavorite(item.id);
+  } else {
+    addFavorite(item);
+  }
 }
