@@ -124,13 +124,11 @@ function detectEntities(prompt: string): string[] {
     "espagne",
     "spain",
     "algerie",
-    "algérie",
     "andalus",
     "maghreb",
     "sultan",
     "roi",
     "king",
-    "pierre",
     "pedro",
   ];
 
@@ -145,10 +143,17 @@ function detectDocumentTypes(prompt: string): string[] {
   if (q.includes("manuscrit") || q.includes("manuscript")) found.push("manuscrit");
   if (q.includes("journal") || q.includes("newspaper") || q.includes("presse")) found.push("journal");
   if (q.includes("revue") || q.includes("review") || q.includes("article")) found.push("revue");
-  if (q.includes("livre") || q.includes("book") || q.includes("bibliographie")) found.push("livre");
+  if (
+    q.includes("livre") ||
+    q.includes("book") ||
+    q.includes("bibliographie") ||
+    q.includes("bibliography")
+  ) {
+    found.push("livre");
+  }
   if (q.includes("carte") || q.includes("map")) found.push("carte");
   if (q.includes("image") || q.includes("photo") || q.includes("iconographie")) found.push("image");
-  if (q.includes("video") || q.includes("vidéo") || q.includes("film")) found.push("video");
+  if (q.includes("video") || q.includes("film")) found.push("video");
   if (q.includes("archive")) found.push("archive");
 
   return uniq(found);
@@ -159,7 +164,7 @@ function detectLanguages(prompt: string): string[] {
   const langs: string[] = [];
 
   if (/[ء-ي]/.test(prompt) || q.includes("arabe") || q.includes("arabic")) langs.push("ar");
-  if (q.includes("francais") || q.includes("français") || q.includes("french")) langs.push("fr");
+  if (q.includes("francais") || q.includes("french")) langs.push("fr");
   if (q.includes("anglais") || q.includes("english")) langs.push("en");
   if (q.includes("espagnol") || q.includes("spanish") || q.includes("espanol")) langs.push("es");
   if (q.includes("turc") || q.includes("turkish")) langs.push("tr");
@@ -171,36 +176,61 @@ function detectPreferredSources(prompt: string): string[] {
   const q = normalizeForMatch(prompt);
   const sources: string[] = [];
 
-  if (q.includes("espagne") || q.includes("spain") || q.includes("aragon") || q.includes("pedro iv")) {
-    sources.push("PARES");
-  }
-
-  if (q.includes("france") || q.includes("french") || q.includes("francais") || q.includes("français")) {
+  if (q.includes("france") || q.includes("french") || q.includes("francais")) {
     sources.push("Gallica / BnF");
   }
 
-  if (q.includes("cia") || q.includes("cold war") || q.includes("guerre froide") || q.includes("declassifie")) {
-    sources.push("CIA Reading Room");
-    sources.push("National Archives (USA)");
-  }
-
-  if (q.includes("usa") || q.includes("united states") || q.includes("amerique") || q.includes("america")) {
+  if (
+    q.includes("cia") ||
+    q.includes("cold war") ||
+    q.includes("guerre froide") ||
+    q.includes("declassifie") ||
+    q.includes("declassified")
+  ) {
     sources.push("National Archives (USA)");
     sources.push("Library of Congress");
   }
 
-  if (q.includes("book") || q.includes("livre") || q.includes("bibliographie")) {
+  if (
+    q.includes("usa") ||
+    q.includes("united states") ||
+    q.includes("amerique") ||
+    q.includes("america")
+  ) {
+    sources.push("National Archives (USA)");
+    sources.push("Library of Congress");
+  }
+
+  if (
+    q.includes("book") ||
+    q.includes("livre") ||
+    q.includes("bibliographie") ||
+    q.includes("bibliography")
+  ) {
     sources.push("Internet Archive");
   }
 
+  if (q.includes("espagne") || q.includes("spain") || q.includes("aragon") || q.includes("pedro iv")) {
+    sources.push("Gallica / BnF");
+  }
+
   if (sources.length === 0) {
-    sources.push("Gallica / BnF", "Internet Archive", "Library of Congress", "National Archives (USA)");
+    sources.push(
+      "Gallica / BnF",
+      "Internet Archive",
+      "Library of Congress",
+      "National Archives (USA)"
+    );
   }
 
   return uniq(sources);
 }
 
-function detectDateRange(prompt: string): { extractedYear: string | null; dateFrom: number | null; dateTo: number | null } {
+function detectDateRange(prompt: string): {
+  extractedYear: string | null;
+  dateFrom: number | null;
+  dateTo: number | null;
+} {
   const q = normalizeForMatch(prompt);
 
   const yearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
@@ -260,7 +290,7 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "presse",
     "letter",
     "lettre",
-    "traité",
+    "traite",
     "treaty",
     "sultan",
     "roi",
@@ -273,7 +303,6 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "map",
     "colonial",
     "medieval",
-    "médiéval",
     "ottoman",
     "aragon",
     "maroc",
@@ -289,6 +318,7 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "world war",
     "guerre",
     "bibliographie",
+    "bibliography",
     "livre",
     "book",
     "source primaire",
@@ -346,7 +376,7 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
   } else if (exactDocumentMode) {
     intent = "document_exact";
   } else if (
-    q.includes("traité") ||
+    q.includes("traite") ||
     q.includes("treaty") ||
     q.includes("battle") ||
     q.includes("guerre")
@@ -404,7 +434,9 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     summary:
       intent === "non_historical"
         ? "La demande ne semble pas relever clairement de la recherche historique."
-        : `Recherche historique interprétée comme ${intent}, avec priorité aux documents ${documentTypes.length ? documentTypes.join(", ") : "historiques"} et aux sources ${preferredSources.join(", ")}.`,
+        : `Recherche historique interprétée comme ${intent}, avec priorité aux documents ${
+            documentTypes.length ? documentTypes.join(", ") : "historiques"
+          } et aux sources ${preferredSources.join(", ")}.`,
     generatedQueries,
   };
 }
@@ -519,14 +551,15 @@ function sortResults(results: ScoredResult[]): ScoredResult[] {
 }
 
 function expandPromptQueries(prompt: string, analysis: PromptAnalysis): string[] {
-  const q = prompt.toLowerCase();
+  const q = normalizeForMatch(prompt);
   const expansions = new Set<string>();
 
   expansions.add(prompt);
   analysis.generatedQueries.forEach((g) => expansions.add(g));
 
-  if (q.includes("traité")) {
+  if (q.includes("traite")) {
     expansions.add(prompt.replace(/traité/gi, "treaty"));
+    expansions.add(prompt.replace(/traite/gi, "treaty"));
     expansions.add(prompt.replace(/traité/gi, "معاهدة"));
   }
 
@@ -620,13 +653,16 @@ function buildExternalPortals(prompt: string): ExternalPortal[] {
   ];
 }
 
-function applyFilters(results: ScoredResult[], filters: {
-  source?: string;
-  documentType?: string;
-  primaryOnly?: boolean;
-  yearFrom?: number | null;
-  yearTo?: number | null;
-}): ScoredResult[] {
+function applyFilters(
+  results: ScoredResult[],
+  filters: {
+    source?: string;
+    documentType?: string;
+    primaryOnly?: boolean;
+    yearFrom?: number | null;
+    yearTo?: number | null;
+  }
+): ScoredResult[] {
   return results.filter((item) => {
     if (filters.source && filters.source !== "all" && item.source !== filters.source) {
       return false;
