@@ -7,7 +7,7 @@ import { FavoriteItem, isFavorite, toggleFavorite } from "@/lib/favorites";
 type SearchResult = FavoriteItem & {
   score?: number;
   exactScore?: number;
-  relevanceLabel?: "Très pertinent" | "Pertinent" | "Connexe";
+  relevanceLabel?: "exact" | "strong" | "related";
   historicalSummary?: string;
 };
 
@@ -41,7 +41,6 @@ type SearchResponse = {
   availableDocumentTypes?: string[];
   analysis?: PromptAnalysis;
   expandedQueries?: string[];
-  topExactMatch?: SearchResult | null;
 };
 
 function badgeStyle(background: string, color: string): React.CSSProperties {
@@ -54,13 +53,36 @@ function badgeStyle(background: string, color: string): React.CSSProperties {
     fontWeight: 700,
     background,
     color,
+    border: "1px solid rgba(15,23,42,0.06)",
   };
 }
 
-function relevanceStyle(label?: string): React.CSSProperties {
-  if (label === "Très pertinent") return badgeStyle("#dcfce7", "#166534");
-  if (label === "Pertinent") return badgeStyle("#fef3c7", "#92400e");
-  return badgeStyle("#e2e8f0", "#334155");
+function relevanceBadge(label?: "exact" | "strong" | "related") {
+  if (label === "exact") {
+    return {
+      text: "🟢 Correspondance exacte",
+      style: badgeStyle("#dcfce7", "#166534"),
+    };
+  }
+
+  if (label === "strong") {
+    return {
+      text: "🟡 Très pertinent",
+      style: badgeStyle("#fef3c7", "#92400e"),
+    };
+  }
+
+  return {
+    text: "🔵 Résultat lié",
+    style: badgeStyle("#dbeafe", "#1d4ed8"),
+  };
+}
+
+function sourceTypeBadge(label?: string) {
+  if (label === "Source primaire") {
+    return badgeStyle("#ede9fe", "#6d28d9");
+  }
+  return badgeStyle("#f1f5f9", "#334155");
 }
 
 export default function SearchPage() {
@@ -69,7 +91,6 @@ export default function SearchPage() {
   const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
   const [analysis, setAnalysis] = useState<PromptAnalysis | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<string[]>([]);
-  const [topExactMatch, setTopExactMatch] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -87,7 +108,6 @@ export default function SearchPage() {
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
     const ids = results.filter((item) => isFavorite(item.id)).map((item) => item.id);
     setFavoriteIds(ids);
   }, [results]);
@@ -126,7 +146,6 @@ export default function SearchPage() {
     setSmartLinks([]);
     setAnalysis(null);
     setExpandedQueries([]);
-    setTopExactMatch(null);
     setPage(1);
     setHasMore(false);
 
@@ -145,14 +164,12 @@ export default function SearchPage() {
       setSmartLinks(data.smartLinks || []);
       setAnalysis(data.analysis || null);
       setExpandedQueries(data.expandedQueries || []);
-      setTopExactMatch(data.topExactMatch || null);
       setHasMore(Boolean(data.hasMore));
       setPage(1);
       setAvailableSources(data.availableSources || ["all"]);
       setAvailableDocumentTypes(data.availableDocumentTypes || ["all"]);
       refreshFavoriteIds(newResults);
-setError("");
-
+      setError(data.error || "");
     } catch {
       setError("Impossible de lancer la recherche.");
     } finally {
@@ -190,376 +207,340 @@ setError("");
       style={{
         minHeight: "100vh",
         background:
-          "radial-gradient(circle at top, rgba(168,85,247,0.22), transparent 28%), linear-gradient(135deg, #07152f 0%, #0b1733 45%, #111827 100%)",
-        color: "#fff",
-        padding: "40px 20px 80px",
+          "linear-gradient(180deg, #eef4ff 0%, #f8fbff 18%, #ffffff 40%, #f8fafc 100%)",
+        color: "#0f172a",
       }}
     >
-      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <section style={{ textAlign: "center", marginBottom: 36 }}>
-          <h1 style={{ fontSize: 60, margin: 0, fontWeight: 900 }}>
-            <span
-              style={{
-                background: "linear-gradient(90deg, #ff3cac, #7c3aed, #38bdf8)",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                color: "transparent",
-              }}
-            >
-              Histori
-            </span>
-            <span>Source</span>
-          </h1>
-
-          <p style={{ marginTop: 18, fontSize: 20, color: "rgba(255,255,255,0.78)" }}>
-            Décris en langage naturel ce que tu recherches en histoire.
-          </p>
-
-          <div style={{ marginTop: 16 }}>
-            <Link
-              href="/favorites"
-              style={{
-                display: "inline-block",
-                background: "linear-gradient(90deg, #f59e0b, #f97316)",
-                color: "#fff",
-                padding: "10px 18px",
-                borderRadius: 12,
-                textDecoration: "none",
-                fontWeight: 800,
-              }}
-            >
-              Voir mes favoris
-            </Link>
-          </div>
-        </section>
-
-        <section
+      <section
+        style={{
+          background:
+            "linear-gradient(135deg, rgba(59,130,246,0.12) 0%, rgba(168,85,247,0.10) 35%, rgba(236,72,153,0.08) 100%)",
+          borderBottom: "1px solid rgba(15,23,42,0.08)",
+        }}
+      >
+        <div
           style={{
-            maxWidth: 950,
+            maxWidth: 1180,
             margin: "0 auto",
-            background: "rgba(255,255,255,0.94)",
-            color: "#0f172a",
-            borderRadius: 22,
-            padding: 24,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+            padding: "28px 20px 22px",
           }}
         >
-          <form onSubmit={handleSearch}>
-            <label style={{ display: "block", fontWeight: 800, marginBottom: 10 }}>
-              Prompt historique
-            </label>
-
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Exemple : Je cherche une lettre diplomatique entre le Maroc et l’Aragon vers 1350, de préférence une source primaire conservée dans les archives espagnoles."
-              style={{
-                width: "100%",
-                minHeight: 140,
-                padding: 16,
-                borderRadius: 16,
-                border: "1px solid #cbd5e1",
-                resize: "vertical",
-                fontSize: 16,
-                fontFamily: "inherit",
-                boxSizing: "border-box",
-              }}
-            />
-
-            <div
-              style={{
-                marginTop: 16,
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: 12,
-              }}
-            >
-              <select
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                style={{ padding: 10, borderRadius: 10, border: "1px solid #cbd5e1" }}
-              >
-                {availableSources.map((item) => (
-                  <option key={item} value={item}>
-                    {item === "all" ? "Toutes les sources" : item}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={documentType}
-                onChange={(e) => setDocumentType(e.target.value)}
-                style={{ padding: 10, borderRadius: 10, border: "1px solid #cbd5e1" }}
-              >
-                {availableDocumentTypes.map((item) => (
-                  <option key={item} value={item}>
-                    {item === "all" ? "Tous les types" : item}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="number"
-                placeholder="Année min"
-                value={yearFrom}
-                onChange={(e) => setYearFrom(e.target.value)}
-                style={{ padding: 10, borderRadius: 10, border: "1px solid #cbd5e1" }}
-              />
-
-              <input
-                type="number"
-                placeholder="Année max"
-                value={yearTo}
-                onChange={(e) => setYearTo(e.target.value)}
-                style={{ padding: 10, borderRadius: 10, border: "1px solid #cbd5e1" }}
-              />
-            </div>
-
-            <label
-              style={{
-                marginTop: 14,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                color: "#334155",
-                fontWeight: 600,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={primaryOnly}
-                onChange={(e) => setPrimaryOnly(e.target.checked)}
-              />
-              Sources primaires seulement
-            </label>
-
-            <div style={{ marginTop: 20, display: "flex", justifyContent: "center" }}>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "14px 30px",
-                  fontSize: 17,
-                  fontWeight: 800,
-                  color: "#fff",
-                  background: "linear-gradient(90deg, #ec4899, #f43f5e)",
-                  cursor: loading ? "not-allowed" : "pointer",
-                }}
-              >
-                {loading ? "Analyse et recherche..." : "Lancer la recherche IA"}
-              </button>
-            </div>
-          </form>
-        </section>
-
-        {analysis && (
-          <section
+          <div
             style={{
-              maxWidth: 980,
-              margin: "24px auto 0",
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 18,
-              padding: 18,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
             }}
           >
-            <h2 style={{ marginTop: 0 }}>🧠 Analyse IA de votre recherche</h2>
-            <p style={{ color: "#e2e8f0" }}>{analysis.summary}</p>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
-              <span style={badgeStyle("#1e293b", "#fff")}>Type : {analysis.intent}</span>
-              <span style={badgeStyle("#1e293b", "#fff")}>
-                Historique : {analysis.isHistorical ? "Oui" : "Non"}
-              </span>
-              <span style={badgeStyle("#1e293b", "#fff")}>
-                Confiance : {Math.round(analysis.confidence * 100)}%
-              </span>
-              <span style={badgeStyle("#1e293b", "#fff")}>
-                Document exact : {analysis.exactDocumentMode ? "Oui" : "Non"}
-              </span>
-            </div>
-
-            {analysis.entities.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <strong>Entités détectées :</strong>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                  {analysis.entities.map((item) => (
-                    <span key={item} style={badgeStyle("#312e81", "#fff")}>
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {analysis.documentTypes.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <strong>Types documentaires :</strong>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                  {analysis.documentTypes.map((item) => (
-                    <span key={item} style={badgeStyle("#7e22ce", "#fff")}>
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {analysis.preferredSources.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <strong>Sources prioritaires :</strong>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                  {analysis.preferredSources.map((item) => (
-                    <span key={item} style={badgeStyle("#0f766e", "#fff")}>
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {analysis.languages.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <strong>Langues détectées :</strong>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                  {analysis.languages.map((item) => (
-                    <span key={item} style={badgeStyle("#0f172a", "#e2e8f0")}>
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        {topExactMatch && (
-          <section
-            style={{
-              maxWidth: 980,
-              margin: "20px auto 0",
-              background: "rgba(34,197,94,0.15)",
-              border: "1px solid rgba(34,197,94,0.35)",
-              borderRadius: 18,
-              padding: 18,
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>🎯 Document probable trouvé</h2>
-            <h3 style={{ marginBottom: 8 }}>{topExactMatch.title}</h3>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              <span style={badgeStyle("#dcfce7", "#166534")}>
-                {topExactMatch.relevanceLabel || "Très pertinent"}
-              </span>
-              <span style={badgeStyle("#eef2ff", "#4338ca")}>{topExactMatch.source}</span>
-              {topExactMatch.year && (
-                <span style={badgeStyle("#f8fafc", "#334155")}>{topExactMatch.year}</span>
-              )}
-            </div>
-
-            {topExactMatch.historicalSummary && (
-              <p
+            <div>
+              <Link
+                href="/"
                 style={{
-                  marginTop: 12,
-                  color: "#e2e8f0",
-                  background: "rgba(255,255,255,0.06)",
-                  padding: 12,
-                  borderRadius: 12,
-                }}
-              >
-                {topExactMatch.historicalSummary}
-              </p>
-            )}
-
-            {topExactMatch.officialUrl && (
-              <a
-                href={topExactMatch.officialUrl}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  display: "inline-block",
-                  marginTop: 12,
-                  background: "linear-gradient(90deg, #16a34a, #22c55e)",
-                  color: "#fff",
-                  padding: "10px 16px",
-                  borderRadius: 12,
                   textDecoration: "none",
-                  fontWeight: 800,
+                  fontSize: 34,
+                  fontWeight: 900,
+                  letterSpacing: -0.8,
                 }}
               >
-                Ouvrir la source officielle
-              </a>
-            )}
-          </section>
-        )}
-
-{error && (
-  <div
-    style={{
-      marginTop: 20,
-      background: "rgba(255,255,255,0.08)",
-      border: "1px solid rgba(255,255,255,0.15)",
-      borderRadius: 12,
-      padding: 12,
-      color: "#e2e8f0",
-      fontSize: 14,
-    }}
-  >
-    {error}
-  </div>
-)}
-        {expandedQueries.length > 0 && (
-          <section style={{ maxWidth: 980, margin: "20px auto 0" }}>
-            <h2 style={{ fontSize: 22, marginBottom: 12 }}>Requêtes générées</h2>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {expandedQueries.map((item) => (
-                <span key={item} style={badgeStyle("rgba(255,255,255,0.08)", "#fff")}>
-                  {item}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {smartLinks.length > 0 && (
-          <section style={{ maxWidth: 980, margin: "26px auto 0" }}>
-            <h2 style={{ fontSize: 24, marginBottom: 14 }}>🔎 Accès direct aux archives</h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 14,
-              }}
-            >
-              {smartLinks.map((link, i) => (
-                <a
-                  key={i}
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
+                <span
                   style={{
-                    textDecoration: "none",
-                    color: "#fff",
-                    background: "rgba(255,255,255,0.08)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 16,
-                    padding: 16,
+                    background: "linear-gradient(90deg, #2563eb, #7c3aed, #ec4899)",
+                    WebkitBackgroundClip: "text",
+                    backgroundClip: "text",
+                    color: "transparent",
                   }}
                 >
-                  <div style={{ fontWeight: 800, fontSize: 16 }}>{link.name}</div>
-                  <div style={{ marginTop: 8, color: "#cbd5e1", fontSize: 13 }}>
-                    Ouvrir la recherche ciblée
-                  </div>
-                </a>
-              ))}
+                  HistoriSource
+                </span>
+              </Link>
+              <div style={{ marginTop: 6, color: "#475569", fontSize: 15 }}>
+                Sources historiques fiables • accès direct aux documents • recherche FR / AR
+              </div>
             </div>
-          </section>
-        )}
 
-        <section style={{ maxWidth: 980, margin: "30px auto 0" }}>
-          <div style={{ display: "grid", gap: 18 }}>
-            {results.map((item) => {
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Link
+                href="/favorites"
+                style={{
+                  textDecoration: "none",
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "#fff",
+                  border: "1px solid rgba(15,23,42,0.08)",
+                  color: "#0f172a",
+                  fontWeight: 700,
+                  boxShadow: "0 8px 24px rgba(15,23,42,0.06)",
+                }}
+              >
+                ⭐ Mes favoris
+              </Link>
+            </div>
+          </div>
+
+          <form onSubmit={handleSearch} style={{ marginTop: 20 }}>
+            <div
+              style={{
+                background: "#fff",
+                borderRadius: 24,
+                border: "1px solid rgba(15,23,42,0.08)",
+                boxShadow: "0 18px 50px rgba(37,99,235,0.08)",
+                padding: 16,
+              }}
+            >
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Ex : traité de Tafna, Journal officiel France 1955, كتاب الأنيس المطرب بروض القرطاس..."
+                style={{
+                  width: "100%",
+                  minHeight: 92,
+                  resize: "vertical",
+                  border: "none",
+                  outline: "none",
+                  fontSize: 18,
+                  lineHeight: 1.5,
+                  color: "#0f172a",
+                  background: "transparent",
+                  fontFamily: "inherit",
+                  boxSizing: "border-box",
+                }}
+              />
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: 10,
+                  marginTop: 12,
+                }}
+              >
+                <select
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  style={{
+                    padding: "11px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                  }}
+                >
+                  {availableSources.map((item) => (
+                    <option key={item} value={item}>
+                      {item === "all" ? "Toutes les sources" : item}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={documentType}
+                  onChange={(e) => setDocumentType(e.target.value)}
+                  style={{
+                    padding: "11px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                  }}
+                >
+                  {availableDocumentTypes.map((item) => (
+                    <option key={item} value={item}>
+                      {item === "all" ? "Tous les types" : item}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="number"
+                  value={yearFrom}
+                  onChange={(e) => setYearFrom(e.target.value)}
+                  placeholder="Année min"
+                  style={{
+                    padding: "11px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #cbd5e1",
+                  }}
+                />
+
+                <input
+                  type="number"
+                  value={yearTo}
+                  onChange={(e) => setYearTo(e.target.value)}
+                  placeholder="Année max"
+                  style={{
+                    padding: "11px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #cbd5e1",
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  marginTop: 14,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 12,
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    color: "#334155",
+                    fontWeight: 600,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={primaryOnly}
+                    onChange={(e) => setPrimaryOnly(e.target.checked)}
+                  />
+                  Sources primaires seulement
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "12px 22px",
+                    background: "linear-gradient(90deg, #2563eb, #7c3aed)",
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 15,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    boxShadow: "0 12px 30px rgba(37,99,235,0.22)",
+                  }}
+                >
+                  {loading ? "Recherche..." : "Rechercher"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <div
+        style={{
+          maxWidth: 1180,
+          margin: "0 auto",
+          padding: "24px 20px 60px",
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 300px",
+          gap: 24,
+        }}
+      >
+        <section>
+          {analysis && (
+            <div
+              style={{
+                background: "#fff",
+                borderRadius: 20,
+                border: "1px solid rgba(15,23,42,0.08)",
+                padding: 18,
+                boxShadow: "0 12px 32px rgba(15,23,42,0.04)",
+                marginBottom: 18,
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>
+                🧠 Analyse IA
+              </div>
+
+              <p style={{ margin: 0, color: "#475569", lineHeight: 1.6 }}>
+                {analysis.summary}
+              </p>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  marginTop: 14,
+                }}
+              >
+                <span style={badgeStyle("#eff6ff", "#1d4ed8")}>
+                  Intent : {analysis.intent}
+                </span>
+                <span style={badgeStyle("#f5f3ff", "#6d28d9")}>
+                  Confiance : {Math.round(analysis.confidence * 100)}%
+                </span>
+                <span style={badgeStyle("#fdf2f8", "#be185d")}>
+                  Document exact : {analysis.exactDocumentMode ? "Oui" : "Non"}
+                </span>
+              </div>
+
+              {analysis.entities.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Entités détectées</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {analysis.entities.map((item) => (
+                      <span key={item} style={badgeStyle("#ecfeff", "#155e75")}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {expandedQueries.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Requêtes générées</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {expandedQueries.map((item) => (
+                      <span key={item} style={badgeStyle("#f8fafc", "#334155")}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div
+              style={{
+                marginBottom: 18,
+                background: "#fff7ed",
+                color: "#9a3412",
+                border: "1px solid #fdba74",
+                borderRadius: 16,
+                padding: 14,
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 20,
+              border: "1px solid rgba(15,23,42,0.08)",
+              padding: "8px 18px",
+              boxShadow: "0 12px 32px rgba(15,23,42,0.04)",
+            }}
+          >
+            {results.length > 0 && (
+              <div
+                style={{
+                  padding: "14px 0 6px",
+                  color: "#475569",
+                  fontSize: 15,
+                }}
+              >
+                {results.length} résultat{results.length > 1 ? "s" : ""} affiché{results.length > 1 ? "s" : ""}
+              </div>
+            )}
+
+            {results.map((item, index) => {
+              const favorite = favoriteIds.includes(item.id);
+              const relevance = relevanceBadge(item.relevanceLabel);
               const detailParams = new URLSearchParams({
                 title: item.title,
                 year: item.year || "",
@@ -571,114 +552,135 @@ setError("");
                 source: item.source,
               });
 
-              const favorite = favoriteIds.includes(item.id);
-
               return (
                 <article
-                  key={item.id}
+                  key={`${item.id}-${index}`}
                   style={{
-                    background: "rgba(255,255,255,0.96)",
-                    color: "#0f172a",
-                    borderRadius: 18,
-                    padding: 18,
-                    boxShadow: "0 14px 32px rgba(0,0,0,0.2)",
+                    padding: "18px 0",
+                    borderBottom:
+                      index === results.length - 1 ? "none" : "1px solid rgba(15,23,42,0.08)",
                   }}
                 >
-                  <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                     {item.thumbnailUrl ? (
                       <img
                         src={item.thumbnailUrl}
                         alt={item.title}
                         style={{
-                          width: 110,
-                          height: 150,
+                          width: 90,
+                          height: 120,
                           objectFit: "cover",
                           borderRadius: 12,
                           flexShrink: 0,
+                          border: "1px solid rgba(15,23,42,0.08)",
                         }}
                       />
                     ) : (
                       <div
                         style={{
-                          width: 110,
-                          height: 150,
+                          width: 90,
+                          height: 120,
                           borderRadius: 12,
-                          background: "linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)",
                           flexShrink: 0,
+                          background:
+                            "linear-gradient(135deg, rgba(37,99,235,0.10), rgba(168,85,247,0.10))",
+                          border: "1px solid rgba(15,23,42,0.06)",
                         }}
                       />
                     )}
 
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ margin: "0 0 10px 0", fontSize: 28 }}>{item.title}</h3>
-
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                        <span style={relevance.style}>{relevance.text}</span>
                         <span style={badgeStyle("#eef2ff", "#4338ca")}>{item.source}</span>
                         {item.documentType && (
                           <span style={badgeStyle("#fdf2f8", "#be185d")}>{item.documentType}</span>
                         )}
                         {item.sourceType && (
-                          <span style={badgeStyle("#ecfeff", "#0f766e")}>{item.sourceType}</span>
-                        )}
-                        {item.relevanceLabel && (
-                          <span style={relevanceStyle(item.relevanceLabel)}>
-                            {item.relevanceLabel}
-                          </span>
+                          <span style={sourceTypeBadge(item.sourceType)}>{item.sourceType}</span>
                         )}
                       </div>
 
-                      <p style={{ margin: "6px 0", color: "#334155" }}>
-                        <strong>Date :</strong> {item.year || "Inconnue"}
-                      </p>
+                      <h2
+                        style={{
+                          margin: "0 0 8px 0",
+                          fontSize: 24,
+                          lineHeight: 1.35,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {item.officialUrl ? (
+                          <a
+                            href={item.officialUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              color: "#1d4ed8",
+                              textDecoration: "none",
+                            }}
+                          >
+                            {item.title}
+                          </a>
+                        ) : (
+                          item.title
+                        )}
+                      </h2>
 
-                      <p style={{ margin: "6px 0", color: "#334155" }}>
-                        <strong>Langue :</strong> {item.language || "Non renseignée"}
-                      </p>
+                      <div
+                        style={{
+                          color: "#475569",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 14,
+                          fontSize: 14,
+                          marginBottom: 10,
+                        }}
+                      >
+                        <span><strong>Date :</strong> {item.year || "Inconnue"}</span>
+                        <span><strong>Langue :</strong> {item.language || "Non renseignée"}</span>
+                      </div>
 
                       {item.historicalSummary && (
                         <p
                           style={{
-                            marginTop: 10,
-                            color: "#475569",
-                            background: "#f8fafc",
-                            padding: 12,
-                            borderRadius: 12,
+                            margin: "0 0 12px 0",
+                            color: "#334155",
+                            lineHeight: 1.65,
                           }}
                         >
                           {item.historicalSummary}
                         </p>
                       )}
 
-                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                         {item.officialUrl && (
                           <a
                             href={item.officialUrl}
                             target="_blank"
                             rel="noreferrer"
                             style={{
-                              display: "inline-block",
+                              textDecoration: "none",
+                              padding: "10px 14px",
+                              borderRadius: 999,
                               background: "linear-gradient(90deg, #2563eb, #3b82f6)",
                               color: "#fff",
-                              padding: "10px 16px",
-                              borderRadius: 12,
-                              textDecoration: "none",
-                              fontWeight: 800,
+                              fontWeight: 700,
                             }}
                           >
-                            Ouvrir la source officielle
+                            Ouvrir le document
                           </a>
                         )}
 
                         <Link
                           href={`/document/${encodeURIComponent(item.id)}?${detailParams.toString()}`}
                           style={{
-                            display: "inline-block",
-                            background: "linear-gradient(90deg, #7c3aed, #a855f7)",
-                            color: "#fff",
-                            padding: "10px 16px",
-                            borderRadius: 12,
                             textDecoration: "none",
-                            fontWeight: 800,
+                            padding: "10px 14px",
+                            borderRadius: 999,
+                            background: "#f8fafc",
+                            color: "#0f172a",
+                            fontWeight: 700,
+                            border: "1px solid rgba(15,23,42,0.08)",
                           }}
                         >
                           Voir la fiche
@@ -688,18 +690,16 @@ setError("");
                           type="button"
                           onClick={() => handleToggleFavorite(item)}
                           style={{
-                            border: "none",
-                            background: favorite
-                              ? "linear-gradient(90deg, #f59e0b, #f97316)"
-                              : "linear-gradient(90deg, #475569, #334155)",
-                            color: "#fff",
-                            padding: "10px 16px",
-                            borderRadius: 12,
-                            fontWeight: 800,
+                            border: "1px solid rgba(15,23,42,0.08)",
+                            background: favorite ? "#fff7ed" : "#ffffff",
+                            color: favorite ? "#c2410c" : "#0f172a",
+                            padding: "10px 14px",
+                            borderRadius: 999,
+                            fontWeight: 700,
                             cursor: "pointer",
                           }}
                         >
-                          {favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+                          {favorite ? "★ Favori" : "☆ Ajouter aux favoris"}
                         </button>
                       </div>
                     </div>
@@ -707,45 +707,81 @@ setError("");
                 </article>
               );
             })}
-          </div>
 
-          {hasMore && (
-            <div style={{ marginTop: 24, textAlign: "center" }}>
-              <button
-                onClick={handleLoadMore}
-                disabled={loadingMore}
+            {!loading && prompt.trim() !== "" && results.length === 0 && !error && (
+              <div
                 style={{
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "14px 28px",
-                  fontSize: 16,
-                  fontWeight: 800,
-                  color: "#fff",
-                  background: "linear-gradient(90deg, #7c3aed, #2563eb)",
-                  cursor: loadingMore ? "not-allowed" : "pointer",
+                  padding: "24px 0",
+                  color: "#475569",
                 }}
               >
-                {loadingMore ? "Chargement..." : "Charger plus de résultats"}
-              </button>
-            </div>
-          )}
+                Aucun résultat trouvé.
+              </div>
+            )}
 
-          {!loading && prompt.trim() !== "" && results.length === 0 && !error && (
-            <div
-              style={{
-                marginTop: 20,
-                background: "rgba(255,255,255,0.08)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                borderRadius: 16,
-                padding: 18,
-                color: "#e2e8f0",
-                textAlign: "center",
-              }}
-            >
-              Aucun résultat trouvé pour cette demande.
-            </div>
-          )}
+            {hasMore && (
+              <div style={{ padding: "20px 0 10px" }}>
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  style={{
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "12px 18px",
+                    background: "linear-gradient(90deg, #7c3aed, #2563eb)",
+                    color: "#fff",
+                    fontWeight: 800,
+                    cursor: loadingMore ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {loadingMore ? "Chargement..." : "Charger plus"}
+                </button>
+              </div>
+            )}
+          </div>
         </section>
+
+        <aside>
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 20,
+              border: "1px solid rgba(15,23,42,0.08)",
+              padding: 18,
+              boxShadow: "0 12px 32px rgba(15,23,42,0.04)",
+              position: "sticky",
+              top: 18,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>
+              🔎 Accès direct aux archives
+            </div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              {smartLinks.map((link, i) => (
+                <a
+                  key={i}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    textDecoration: "none",
+                    background: "linear-gradient(135deg, #f8fafc, #eef2ff)",
+                    border: "1px solid rgba(15,23,42,0.08)",
+                    borderRadius: 14,
+                    padding: 14,
+                    color: "#0f172a",
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>{link.name}</div>
+                  <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
+                    Ouvrir la recherche ciblée
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </aside>
       </div>
     </main>
   );
