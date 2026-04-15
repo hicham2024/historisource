@@ -26,20 +26,23 @@ function normalize(value: string): string {
     .trim();
 }
 
-function extractEntities(prompt: string): CanonicalEntity[] {
-  const q = normalize(prompt);
+function containsWholePhrase(text: string, phrase: string): boolean {
+  const normalizedText = ` ${normalize(text)} `;
+  const normalizedPhrase = ` ${normalize(phrase)} `;
+  return normalizedText.includes(normalizedPhrase);
+}
 
+function extractEntities(prompt: string): CanonicalEntity[] {
   return ENTITY_MAP.filter((entity) =>
-    entity.variants.some((variant) => q.includes(normalize(variant)))
+    entity.variants.some((variant) => containsWholePhrase(prompt, variant))
   );
 }
 
 function extractDocumentTypes(prompt: string): CanonicalDocumentType[] {
-  const q = normalize(prompt);
   const found: CanonicalDocumentType[] = [];
 
   (Object.keys(DOCUMENT_TYPE_SYNONYMS) as CanonicalDocumentType[]).forEach((key) => {
-    if (DOCUMENT_TYPE_SYNONYMS[key].some((variant) => q.includes(normalize(variant)))) {
+    if (DOCUMENT_TYPE_SYNONYMS[key].some((variant) => containsWholePhrase(prompt, variant))) {
       found.push(key);
     }
   });
@@ -48,13 +51,11 @@ function extractDocumentTypes(prompt: string): CanonicalDocumentType[] {
 }
 
 function detectSourcePreference(prompt: string): "primary" | "secondary" | "any" {
-  const q = normalize(prompt);
-
-  if (SOURCE_PREFERENCE_SYNONYMS.primary.some((x) => q.includes(normalize(x)))) {
+  if (SOURCE_PREFERENCE_SYNONYMS.primary.some((x) => containsWholePhrase(prompt, x))) {
     return "primary";
   }
 
-  if (SOURCE_PREFERENCE_SYNONYMS.secondary.some((x) => q.includes(normalize(x)))) {
+  if (SOURCE_PREFERENCE_SYNONYMS.secondary.some((x) => containsWholePhrase(prompt, x))) {
     return "secondary";
   }
 
@@ -78,15 +79,30 @@ function detectDate(prompt: string): {
     };
   }
 
-  if (q.includes("14e siecle") || q.includes("14th century") || q.includes("siglo xiv") || q.includes("xiv") || q.includes("القرن الرابع عشر")) {
+  if (
+    q.includes("14e siecle") ||
+    q.includes("14th century") ||
+    q.includes("siglo xiv") ||
+    q.includes("القرن الرابع عشر")
+  ) {
     return { dateExact: null, dateFrom: 1300, dateTo: 1399 };
   }
 
-  if (q.includes("19e siecle") || q.includes("19th century") || q.includes("siglo xix") || q.includes("القرن التاسع عشر")) {
+  if (
+    q.includes("19e siecle") ||
+    q.includes("19th century") ||
+    q.includes("siglo xix") ||
+    q.includes("القرن التاسع عشر")
+  ) {
     return { dateExact: null, dateFrom: 1800, dateTo: 1899 };
   }
 
-  if (q.includes("20e siecle") || q.includes("20th century") || q.includes("siglo xx") || q.includes("القرن العشرين")) {
+  if (
+    q.includes("20e siecle") ||
+    q.includes("20th century") ||
+    q.includes("siglo xx") ||
+    q.includes("القرن العشرين")
+  ) {
     return { dateExact: null, dateFrom: 1900, dateTo: 1999 };
   }
 
@@ -103,15 +119,16 @@ function classifyIntent(
 
   const exactDocumentMode =
     tokenCount >= 6 &&
-    (Boolean(dateExact) ||
+    entities.length >= 1 &&
+    (
       documentTypes.includes("letter") ||
-      documentTypes.includes("manuscript"));
+      documentTypes.includes("manuscript") ||
+      (Boolean(dateExact) && entities.length >= 2)
+    );
 
   if (
     normalizedPrompt.includes("bibliography") ||
-    normalizedPrompt.includes("bibliographie") ||
-    normalizedPrompt.includes("revue") ||
-    normalizedPrompt.includes("journal")
+    normalizedPrompt.includes("bibliographie")
   ) {
     return "bibliography";
   }
@@ -119,9 +136,13 @@ function classifyIntent(
   if (exactDocumentMode) return "document_exact";
 
   if (
+    normalizedPrompt.includes("accord") ||
+    normalizedPrompt.includes("accords") ||
     normalizedPrompt.includes("traite") ||
     normalizedPrompt.includes("treaty") ||
     normalizedPrompt.includes("tratado") ||
+    normalizedPrompt.includes("agreement") ||
+    normalizedPrompt.includes("evian") ||
     normalizedPrompt.includes("معاهدة")
   ) {
     return "event";
@@ -142,7 +163,9 @@ function classifyIntent(
   if (dateExact) return "period";
 
   if (
-    entities.some((e) => e.canonicalId === "morocco" || e.canonicalId === "aragon")
+    entities.some((e) =>
+      ["morocco", "aragon", "france"].includes(e.canonicalId)
+    )
   ) {
     return "place";
   }
@@ -164,6 +187,7 @@ function selectPreferredArchives(
 
   if (
     ids.includes("morocco") ||
+    ids.includes("france") ||
     documentTypes.includes("book") ||
     documentTypes.includes("newspaper") ||
     documentTypes.includes("journal")
@@ -176,7 +200,7 @@ function selectPreferredArchives(
     archives.push("loc");
   }
 
-  if (ids.includes("cia") || intent === "topic") {
+  if (ids.includes("cia")) {
     archives.push("nara");
     archives.push("cia");
   }
@@ -192,19 +216,34 @@ export function parseHistoricalPrompt(prompt: string): CanonicalHistoricalQuery 
   let nonHistoricalScore = 0;
 
   HISTORICAL_KEYWORDS.forEach((word) => {
-    if (normalizedPrompt.includes(normalize(word))) historicalScore += 1;
+    if (containsWholePhrase(prompt, word)) historicalScore += 1;
   });
 
   NON_HISTORICAL_KEYWORDS.forEach((word) => {
-    if (normalizedPrompt.includes(normalize(word))) nonHistoricalScore += 2;
+    if (containsWholePhrase(prompt, word)) nonHistoricalScore += 2;
   });
+
+  if (
+    normalizedPrompt.includes("accord") ||
+    normalizedPrompt.includes("accords") ||
+    normalizedPrompt.includes("traite") ||
+    normalizedPrompt.includes("treaty") ||
+    normalizedPrompt.includes("agreement")
+  ) {
+    historicalScore += 3;
+  }
+
+  if (normalizedPrompt.includes("evian")) {
+    historicalScore += 4;
+  }
 
   const entities = extractEntities(prompt);
   const documentTypes = extractDocumentTypes(prompt);
   const sourcePreference = detectSourcePreference(prompt);
   const dateInfo = detectDate(prompt);
 
-  const isHistorical = historicalScore + entities.length + documentTypes.length > nonHistoricalScore;
+  const isHistorical =
+    historicalScore + entities.length + documentTypes.length > nonHistoricalScore;
 
   const intent = isHistorical
     ? classifyIntent(normalizedPrompt, entities, documentTypes, dateInfo.dateExact)
@@ -227,11 +266,16 @@ export function parseHistoricalPrompt(prompt: string): CanonicalHistoricalQuery 
   );
 
   const persons = entities.filter((e) => e.canonicalId.includes("pedro"));
-  const places = entities.filter((e) => ["morocco", "aragon", "france"].includes(e.canonicalId));
+  const places = entities.filter((e) =>
+    ["morocco", "aragon", "france"].includes(e.canonicalId)
+  );
 
   const confidence = Math.max(
     0,
-    Math.min(1, (historicalScore + entities.length + documentTypes.length + 1 - nonHistoricalScore) / 8)
+    Math.min(
+      1,
+      (historicalScore + entities.length + documentTypes.length + 1 - nonHistoricalScore) / 8
+    )
   );
 
   return {
