@@ -119,7 +119,6 @@ function detectEntities(prompt: string): string[] {
     "abdelkader",
     "ottoman",
     "empire ottoman",
-    "cia",
     "france",
     "espagne",
     "spain",
@@ -139,10 +138,24 @@ function detectDocumentTypes(prompt: string): string[] {
   const q = normalizeForMatch(prompt);
   const found: string[] = [];
 
-  if (q.includes("lettre") || q.includes("letter")) found.push("lettre");
-  if (q.includes("manuscrit") || q.includes("manuscript")) found.push("manuscrit");
-  if (q.includes("journal") || q.includes("newspaper") || q.includes("presse")) found.push("journal");
-  if (q.includes("revue") || q.includes("review") || q.includes("article")) found.push("revue");
+  if (q.includes("lettre") || q.includes("letter") || q.includes("carta")) {
+    found.push("lettre");
+  }
+  if (q.includes("manuscrit") || q.includes("manuscript") || q.includes("manuscrito")) {
+    found.push("manuscrit");
+  }
+  if (
+    q.includes("journal") ||
+    q.includes("newspaper") ||
+    q.includes("presse") ||
+    q.includes("periodico") ||
+    q.includes("jornal")
+  ) {
+    found.push("journal");
+  }
+  if (q.includes("revue") || q.includes("review") || q.includes("article")) {
+    found.push("revue");
+  }
   if (
     q.includes("livre") ||
     q.includes("book") ||
@@ -152,9 +165,11 @@ function detectDocumentTypes(prompt: string): string[] {
     found.push("livre");
   }
   if (q.includes("carte") || q.includes("map")) found.push("carte");
-  if (q.includes("image") || q.includes("photo") || q.includes("iconographie")) found.push("image");
+  if (q.includes("image") || q.includes("photo") || q.includes("iconographie")) {
+    found.push("image");
+  }
   if (q.includes("video") || q.includes("film")) found.push("video");
-  if (q.includes("archive")) found.push("archive");
+  if (q.includes("archive") || q.includes("archives")) found.push("archive");
 
   return uniq(found);
 }
@@ -167,6 +182,7 @@ function detectLanguages(prompt: string): string[] {
   if (q.includes("francais") || q.includes("french")) langs.push("fr");
   if (q.includes("anglais") || q.includes("english")) langs.push("en");
   if (q.includes("espagnol") || q.includes("spanish") || q.includes("espanol")) langs.push("es");
+  if (q.includes("portugais") || q.includes("portuguese") || q.includes("portugues")) langs.push("pt");
   if (q.includes("turc") || q.includes("turkish")) langs.push("tr");
 
   return uniq(langs);
@@ -244,34 +260,18 @@ function detectDateRange(prompt: string): {
   }
 
   if (q.includes("xive") || q.includes("14e siecle") || q.includes("14th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1300,
-      dateTo: 1399,
-    };
+    return { extractedYear: null, dateFrom: 1300, dateTo: 1399 };
   }
 
   if (q.includes("xixe") || q.includes("19e siecle") || q.includes("19th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1800,
-      dateTo: 1899,
-    };
+    return { extractedYear: null, dateFrom: 1800, dateTo: 1899 };
   }
 
   if (q.includes("xxe") || q.includes("20e siecle") || q.includes("20th century")) {
-    return {
-      extractedYear: null,
-      dateFrom: 1900,
-      dateTo: 1999,
-    };
+    return { extractedYear: null, dateFrom: 1900, dateTo: 1999 };
   }
 
-  return {
-    extractedYear: null,
-    dateFrom: null,
-    dateTo: null,
-  };
+  return { extractedYear: null, dateFrom: null, dateTo: null };
 }
 
 function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
@@ -290,8 +290,12 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "presse",
     "letter",
     "lettre",
+    "carta",
     "traite",
     "treaty",
+    "accord",
+    "accords",
+    "agreement",
     "sultan",
     "roi",
     "king",
@@ -311,8 +315,6 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "abd el kader",
     "abdelkader",
     "pedro iv",
-    "cia",
-    "foia",
     "declassified",
     "declassifie",
     "world war",
@@ -322,6 +324,11 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     "livre",
     "book",
     "source primaire",
+    "evian",
+    "officiel",
+    "official",
+    "republique",
+    "republique francaise",
   ];
 
   const nonHistoricalKeywords = [
@@ -354,6 +361,20 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     if (q.includes(keyword)) nonHistoricalScore += 2;
   });
 
+  if (
+    q.includes("accord") ||
+    q.includes("accords") ||
+    q.includes("traite") ||
+    q.includes("treaty") ||
+    q.includes("agreement")
+  ) {
+    historicalScore += 3;
+  }
+
+  if (q.includes("evian")) {
+    historicalScore += 4;
+  }
+
   const dateInfo = detectDateRange(prompt);
   const entities = detectEntities(prompt);
   const documentTypes = detectDocumentTypes(prompt);
@@ -361,25 +382,37 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
   const languages = detectLanguages(prompt);
 
   const tokenCount = q.split(" ").filter(Boolean).length;
+
   const exactDocumentMode =
     tokenCount >= 6 &&
-    (Boolean(dateInfo.extractedYear) ||
+    entities.length >= 1 &&
+    (
       documentTypes.includes("lettre") ||
-      documentTypes.includes("manuscrit"));
+      documentTypes.includes("manuscrit") ||
+      (Boolean(dateInfo.extractedYear) && entities.length >= 2)
+    );
 
   let intent: HistoricalIntent = "topic";
 
-  if (q.includes("bibliographie") || q.includes("bibliography") || q.includes("revue") || q.includes("revues")) {
+  if (
+    q.includes("bibliographie") ||
+    q.includes("bibliography") ||
+    q.includes("revue") ||
+    q.includes("revues")
+  ) {
     intent = "bibliography";
   } else if (nonHistoricalScore > historicalScore + 1) {
     intent = "non_historical";
   } else if (exactDocumentMode) {
     intent = "document_exact";
   } else if (
+    q.includes("accord") ||
+    q.includes("accords") ||
     q.includes("traite") ||
     q.includes("treaty") ||
     q.includes("battle") ||
-    q.includes("guerre")
+    q.includes("guerre") ||
+    q.includes("evian")
   ) {
     intent = "event";
   } else if (
@@ -397,7 +430,9 @@ function analyzeHistoricalPrompt(prompt: string): PromptAnalysis {
     q.includes("maroc") ||
     q.includes("morocco") ||
     q.includes("aragon") ||
-    q.includes("andalus")
+    q.includes("andalus") ||
+    q.includes("france") ||
+    q.includes("algerie")
   ) {
     intent = "place";
   }
@@ -550,12 +585,53 @@ function sortResults(results: ScoredResult[]): ScoredResult[] {
   });
 }
 
+function buildShortQueries(prompt: string, analysis: PromptAnalysis): string[] {
+  const q = normalizeForMatch(prompt);
+  const shortQueries = new Set<string>();
+
+  const entities = analysis.entities;
+  const docs = analysis.documentTypes;
+  const year = analysis.extractedYear ? [analysis.extractedYear] : [];
+
+  if (entities.length > 0) {
+    shortQueries.add([...entities, ...year].join(" "));
+    shortQueries.add([...entities, ...docs, ...year].join(" "));
+  }
+
+  if (q.includes("journal officiel")) {
+    shortQueries.add("journal officiel france");
+    if (analysis.extractedYear) {
+      shortQueries.add(`journal officiel france ${analysis.extractedYear}`);
+      shortQueries.add(`journal officiel republique francaise ${analysis.extractedYear}`);
+    }
+  }
+
+  if (q.includes("accords d evian") || q.includes("accords evian") || q.includes("evian")) {
+    shortQueries.add("accords evian 1962");
+    shortQueries.add("evian accords 1962");
+    shortQueries.add("france algerie evian 1962");
+  }
+
+  if (q.includes("pedro iv") && q.includes("maroc")) {
+    shortQueries.add("pedro iv maroc 1350");
+    shortQueries.add("morocco aragon letter 1350");
+    shortQueries.add("carta pedro iv marruecos 1350");
+  }
+
+  if (q.includes("journal officiel") && q.includes("france")) {
+    shortQueries.add("journal officiel republique francaise");
+  }
+
+  return Array.from(shortQueries).filter(Boolean);
+}
+
 function expandPromptQueries(prompt: string, analysis: PromptAnalysis): string[] {
   const q = normalizeForMatch(prompt);
   const expansions = new Set<string>();
 
   expansions.add(prompt);
   analysis.generatedQueries.forEach((g) => expansions.add(g));
+  buildShortQueries(prompt, analysis).forEach((sq) => expansions.add(sq));
 
   if (q.includes("traite")) {
     expansions.add(prompt.replace(/traité/gi, "treaty"));
@@ -935,33 +1011,33 @@ export async function GET(req: NextRequest) {
   const analysis = analyzeHistoricalPrompt(prompt);
 
   if (!analysis.isHistorical) {
-  return NextResponse.json({
-    query: prompt,
-    analysis,
-    total: 0,
-    results: [],
-    topExactMatch: null,
-    smartLinks: buildSmartLinks(prompt, analysis),
-    externalPortals: buildExternalPortals(prompt),
-    availableSources: [
-      "all",
-      "Internet Archive",
-      "Gallica / BnF",
-      "Library of Congress",
-      "National Archives (USA)",
-    ],
-    availableDocumentTypes: [
-      "all",
-      "Livre",
-      "Journal",
-      "Manuscrit",
-      "Carte",
-      "Image",
-      "Archive",
-      "Document",
-    ],
-  });
-}
+    return NextResponse.json({
+      query: prompt,
+      analysis,
+      total: 0,
+      results: [],
+      topExactMatch: null,
+      smartLinks: buildSmartLinks(prompt, analysis),
+      externalPortals: buildExternalPortals(prompt),
+      availableSources: [
+        "all",
+        "Internet Archive",
+        "Gallica / BnF",
+        "Library of Congress",
+        "National Archives (USA)",
+      ],
+      availableDocumentTypes: [
+        "all",
+        "Livre",
+        "Journal",
+        "Manuscrit",
+        "Carte",
+        "Image",
+        "Archive",
+        "Document",
+      ],
+    });
+  }
 
   try {
     const queries = expandPromptQueries(prompt, analysis);
@@ -1001,7 +1077,7 @@ export async function GET(req: NextRequest) {
               exactScore,
             };
           })
-          .filter((item) => item.score >= 2 || item.exactScore >= 6),
+          .filter((item) => item.score >= 1 || item.exactScore >= 4),
         {
           source,
           documentType,
@@ -1040,36 +1116,37 @@ export async function GET(req: NextRequest) {
         "Archive",
         "Document",
       ],
+      error: merged.length === 0 ? "Aucun résultat direct trouvé avec les filtres actuels." : "",
     });
   } catch (error) {
     console.error("Erreur API search:", error);
 
     return NextResponse.json({
-  query: prompt,
-  analysis,
-  total: 0,
-  results: [],
-  topExactMatch: null,
-  smartLinks: buildSmartLinks(prompt, analysis),
-  externalPortals: buildExternalPortals(prompt),
-  availableSources: [
-    "all",
-    "Internet Archive",
-    "Gallica / BnF",
-    "Library of Congress",
-    "National Archives (USA)",
-  ],
-  availableDocumentTypes: [
-    "all",
-    "Livre",
-    "Journal",
-    "Manuscrit",
-    "Carte",
-    "Image",
-    "Archive",
-    "Document",
-  ],
-  error: "Aucun résultat direct trouvé avec les filtres actuels.",
-});
+      query: prompt,
+      analysis,
+      total: 0,
+      results: [],
+      topExactMatch: null,
+      smartLinks: buildSmartLinks(prompt, analysis),
+      externalPortals: buildExternalPortals(prompt),
+      availableSources: [
+        "all",
+        "Internet Archive",
+        "Gallica / BnF",
+        "Library of Congress",
+        "National Archives (USA)",
+      ],
+      availableDocumentTypes: [
+        "all",
+        "Livre",
+        "Journal",
+        "Manuscrit",
+        "Carte",
+        "Image",
+        "Archive",
+        "Document",
+      ],
+      error: "Aucun résultat direct trouvé avec les filtres actuels.",
+    });
   }
 }
