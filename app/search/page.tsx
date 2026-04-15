@@ -292,7 +292,6 @@ export default function SearchPage() {
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Ex : traité de Tafna, Journal officiel France 1955, كتاب الأنيس المطرب بروض القرطاس..."
                 style={{
                   width: "100%",
                   minHeight: 92,
