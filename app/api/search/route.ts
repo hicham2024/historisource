@@ -791,6 +791,59 @@ async function searchNara(query: string, page: number): Promise<UnifiedResult[]>
     };
   });
 }
+function resolveKnownHistoricalWork(prompt: string): UnifiedResult | null {
+  const q = normalizeForMatch(prompt);
+
+  const knownWorks = [
+    {
+      aliases: [
+        "كتاب الانيس المطرب بروض القرطاس",
+        "الانيس المطرب بروض القرطاس",
+        "روض القرطاس",
+        "rawd al qirtas",
+        "rawdolkirtas",
+        "rawd qirtas",
+      ],
+      result: {
+        id: "ia-rawdolkirtas",
+        title: "الأنيس المطرب بروض القرطاس",
+        year: null,
+        language: "ar",
+        documentType: "Livre",
+        sourceType: "Source secondaire",
+        officialUrl: "https://archive.org/details/rawdolkirtas",
+        thumbnailUrl: null,
+        source: "Internet Archive",
+      } satisfies UnifiedResult,
+    },
+    {
+      aliases: [
+        "le maroc etude commerciale et agricole",
+        "le maroc étude commerciale et agricole",
+        "maroc etude commerciale et agricole",
+      ],
+      result: {
+        id: "gallica-maroc-etude-commerciale",
+        title: "Le Maroc : étude commerciale et agricole",
+        year: null,
+        language: "fr",
+        documentType: "Livre",
+        sourceType: "Source secondaire",
+        officialUrl: "https://gallica.bnf.fr/ark:/12148/bpt6k5801135s",
+        thumbnailUrl: null,
+        source: "Gallica / BnF",
+      } satisfies UnifiedResult,
+    },
+  ];
+
+  for (const work of knownWorks) {
+    if (work.aliases.some((alias) => q.includes(normalizeForMatch(alias)))) {
+      return work.result;
+    }
+  }
+
+  return null;
+}
 
 export async function GET(req: NextRequest) {
   const prompt = req.nextUrl.searchParams.get("q")?.trim();
@@ -810,7 +863,52 @@ export async function GET(req: NextRequest) {
   }
 
   const { analysis } = convertParsedToAnalysis(prompt);
+const knownWork = resolveKnownHistoricalWork(prompt);
 
+if (knownWork) {
+  return NextResponse.json({
+    query: prompt,
+    analysis: {
+      ...analysis,
+      exactDocumentMode: true,
+      summary:
+        "Correspondance forte trouvée à partir d’un titre historique connu ou de ses variantes.",
+    },
+    expandedQueries: [prompt],
+    page: 1,
+    pageSize: 1,
+    total: 1,
+    hasMore: false,
+    results: [
+      {
+        ...knownWork,
+        score: 100,
+        exactScore: 100,
+        relevanceLabel: "exact",
+      },
+    ],
+    smartLinks: buildSmartLinks(prompt, analysis),
+    externalPortals: buildExternalPortals(prompt),
+    availableSources: [
+      "all",
+      "Internet Archive",
+      "Gallica / BnF",
+      "Library of Congress",
+      "National Archives (USA)",
+    ],
+    availableDocumentTypes: [
+      "all",
+      "Livre",
+      "Journal",
+      "Manuscrit",
+      "Carte",
+      "Image",
+      "Archive",
+      "Document",
+    ],
+    error: "",
+  });
+}
   if (!analysis.isHistorical) {
     return NextResponse.json({
       query: prompt,
