@@ -16,9 +16,12 @@ type UnifiedResult = {
   source: string;
 };
 
+type RelevanceLabel = "exact" | "strong" | "related";
+
 type ScoredResult = UnifiedResult & {
   score: number;
   exactScore: number;
+  relevanceLabel: RelevanceLabel;
 };
 
 type SmartLink = {
@@ -143,9 +146,7 @@ function convertParsedToAnalysis(prompt: string) {
     archive: "archive",
   };
 
-  const documentTypes = parsed.documentTypes.map(
-    (x) => documentTypeMap[x] ?? x
-  );
+  const documentTypes = parsed.documentTypes.map((x) => documentTypeMap[x] ?? x);
 
   const preferredSourceMap: Record<string, string> = {
     pares: "PARES",
@@ -162,11 +163,7 @@ function convertParsedToAnalysis(prompt: string) {
     (x) => preferredSourceMap[x] ?? x
   );
 
-  const generatedQueries = uniq([
-    prompt,
-    ...entities,
-    ...documentTypes,
-  ]).filter(Boolean);
+  const generatedQueries = uniq([prompt, ...entities, ...documentTypes]).filter(Boolean);
 
   const summary = parsed.isHistorical
     ? `Recherche historique interprétée comme ${parsed.intent}, avec priorité aux documents ${
@@ -221,6 +218,15 @@ function buildShortQueries(prompt: string, analysis: PromptAnalysis): string[] {
     shortQueries.add("france algerie evian 1962");
   }
 
+  if (q.includes("tafna")) {
+    shortQueries.add("traite de tafna");
+    shortQueries.add("traité de Tafna");
+    shortQueries.add("treaty of tafna");
+    shortQueries.add("tafna treaty");
+    shortQueries.add("abdelkader tafna 1837");
+    shortQueries.add("معاهدة تافنة");
+  }
+
   if (q.includes("pedro iv") && (q.includes("maroc") || q.includes("morocco"))) {
     shortQueries.add("pedro iv maroc 1350");
     shortQueries.add("morocco aragon letter 1350");
@@ -235,7 +241,6 @@ function buildArchiveDrivenQueries(prompt: string) {
   const archives = selectBestArchives(parsed);
 
   const generated = new Set<string>();
-
   generated.add(prompt);
 
   if (archives.includes("pares") && paresAdapter.supports(parsed)) {
@@ -379,8 +384,76 @@ function computeScore(
   return score;
 }
 
-function sortResults(results: ScoredResult[]): ScoredResult[] {
+/* =========================
+   NOUVEAU : ranking historique
+   ========================= */
+
+function computeHistoricalRelevance(
+  item: UnifiedResult,
+  prompt: string
+): { score: number; label: RelevanceLabel } {
+  const q = normalizeForMatch(prompt);
+  const title = normalizeForMatch(item.title);
+
+  let score = 0;
+  const keywords = q.split(" ").filter((w) => w.length > 3);
+
+  if (title.includes(q)) score += 50;
+
+  keywords.forEach((word) => {
+    if (title.includes(word)) score += 8;
+  });
+
+  if (q.includes("tafna") && title.includes("tafna")) score += 25;
+
+  if (
+    (q.includes("traite") || q.includes("treaty")) &&
+    (title.includes("traite") || title.includes("treaty"))
+  ) {
+    score += 20;
+  }
+
+  if (q.includes("abdelkader") && title.includes("abdelkader")) {
+    score += 15;
+  }
+
+  if (q.includes("evian") && title.includes("evian")) {
+    score += 25;
+  }
+
+  if (
+    (q.includes("accord") || q.includes("agreement")) &&
+    (title.includes("accord") || title.includes("agreement"))
+  ) {
+    score += 18;
+  }
+
+  const yearMatch = q.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+  if (yearMatch && item.year?.includes(yearMatch[1])) {
+    score += 10;
+  }
+
+  if (item.sourceType === "Source primaire") score += 8;
+  if (item.source.includes("Gallica")) score += 5;
+  if (item.source.includes("Internet Archive")) score += 5;
+
+  if (score >= 70) return { score, label: "exact" };
+  if (score >= 40) return { score, label: "strong" };
+  return { score, label: "related" };
+}
+
+function sortHistoricalResults(results: ScoredResult[]): ScoredResult[] {
+  const order: Record<RelevanceLabel, number> = {
+    exact: 3,
+    strong: 2,
+    related: 1,
+  };
+
   return [...results].sort((a, b) => {
+    if (order[b.relevanceLabel] !== order[a.relevanceLabel]) {
+      return order[b.relevanceLabel] - order[a.relevanceLabel];
+    }
+
     if (b.exactScore !== a.exactScore) return b.exactScore - a.exactScore;
     if (b.score !== a.score) return b.score - a.score;
 
@@ -793,27 +866,29 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    const merged = sortResults(
-      applyFilters(
-        dedupeResults(allResults)
-          .map((item) => {
-            const exactScore = computeExactDocumentScore(item, prompt, analysis);
-            const score = computeScore(item, prompt, analysis);
-            return {
-              ...item,
-              score,
-              exactScore,
-            };
-          })
-          .filter((item) => item.score >= 1 || item.exactScore >= 4),
-        {
-          source,
-          documentType,
-          primaryOnly,
-          yearFrom: yearFrom ?? analysis.dateFrom,
-          yearTo: yearTo ?? analysis.dateTo,
-        }
-      )
+    const enriched = dedupeResults(allResults)
+      .map((item) => {
+        const exactScore = computeExactDocumentScore(item, prompt, analysis);
+        const relevance = computeHistoricalRelevance(item, prompt);
+        const baseScore = computeScore(item, prompt, analysis);
+
+        return {
+          ...item,
+          score: baseScore + relevance.score,
+          exactScore,
+          relevanceLabel: relevance.label,
+        };
+      })
+      .filter((item) => item.score >= 1 || item.exactScore >= 4);
+
+    const merged = sortHistoricalResults(
+      applyFilters(enriched, {
+        source,
+        documentType,
+        primaryOnly,
+        yearFrom: yearFrom ?? analysis.dateFrom,
+        yearTo: yearTo ?? analysis.dateTo,
+      })
     );
 
     return NextResponse.json({
