@@ -8,7 +8,24 @@ type SearchResult = FavoriteItem & {
   score?: number;
   exactScore?: number;
   relevanceLabel?: "exact" | "strong" | "related";
-  historicalSummary?: string;
+  historicalSummary?: string | null;
+  citation?: {
+    chicago: string;
+    mla: string;
+    apa: string;
+  };
+  badges?: {
+    isPrimary: boolean;
+    hasScan: boolean;
+    isOfficial: boolean;
+  };
+  related?: Array<{
+    id: string;
+    title: string;
+    year: string | null;
+    source: string;
+    officialUrl: string | null;
+  }>;
 };
 
 type SmartLink = {
@@ -83,6 +100,15 @@ function sourceTypeBadge(label?: string) {
     return badgeStyle("#ede9fe", "#6d28d9");
   }
   return badgeStyle("#f1f5f9", "#334155");
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Citation copiée.");
+  } catch {
+    alert("Impossible de copier la citation.");
+  }
 }
 
 export default function SearchPage() {
@@ -475,7 +501,9 @@ export default function SearchPage() {
 
               {analysis.entities.length > 0 && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Entités détectées</div>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                    Entités détectées
+                  </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {analysis.entities.map((item) => (
                       <span key={item} style={badgeStyle("#ecfeff", "#155e75")}>
@@ -488,7 +516,9 @@ export default function SearchPage() {
 
               {expandedQueries.length > 0 && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Requêtes générées</div>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                    Requêtes générées
+                  </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {expandedQueries.map((item) => (
                       <span key={item} style={badgeStyle("#f8fafc", "#334155")}>
@@ -533,7 +563,8 @@ export default function SearchPage() {
                   fontSize: 15,
                 }}
               >
-                {results.length} résultat{results.length > 1 ? "s" : ""} affiché{results.length > 1 ? "s" : ""}
+                {results.length} résultat{results.length > 1 ? "s" : ""} affiché
+                {results.length > 1 ? "s" : ""}
               </div>
             )}
 
@@ -557,7 +588,9 @@ export default function SearchPage() {
                   style={{
                     padding: "18px 0",
                     borderBottom:
-                      index === results.length - 1 ? "none" : "1px solid rgba(15,23,42,0.08)",
+                      index === results.length - 1
+                        ? "none"
+                        : "1px solid rgba(15,23,42,0.08)",
                   }}
                 >
                   <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
@@ -589,14 +622,39 @@ export default function SearchPage() {
                     )}
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 8,
+                          marginBottom: 10,
+                        }}
+                      >
                         <span style={relevance.style}>{relevance.text}</span>
                         <span style={badgeStyle("#eef2ff", "#4338ca")}>{item.source}</span>
+
                         {item.documentType && (
-                          <span style={badgeStyle("#fdf2f8", "#be185d")}>{item.documentType}</span>
+                          <span style={badgeStyle("#fdf2f8", "#be185d")}>
+                            {item.documentType}
+                          </span>
                         )}
+
                         {item.sourceType && (
-                          <span style={sourceTypeBadge(item.sourceType)}>{item.sourceType}</span>
+                          <span style={sourceTypeBadge(item.sourceType)}>
+                            {item.sourceType}
+                          </span>
+                        )}
+
+                        {item.badges?.isOfficial && (
+                          <span style={badgeStyle("#ecfeff", "#155e75")}>
+                            🏛 Source fiable
+                          </span>
+                        )}
+
+                        {item.badges?.hasScan && (
+                          <span style={badgeStyle("#f0fdf4", "#166534")}>
+                            📄 Scan disponible
+                          </span>
                         )}
                       </div>
 
@@ -635,8 +693,12 @@ export default function SearchPage() {
                           marginBottom: 10,
                         }}
                       >
-                        <span><strong>Date :</strong> {item.year || "Inconnue"}</span>
-                        <span><strong>Langue :</strong> {item.language || "Non renseignée"}</span>
+                        <span>
+                          <strong>Date :</strong> {item.year || "Inconnue"}
+                        </span>
+                        <span>
+                          <strong>Langue :</strong> {item.language || "Non renseignée"}
+                        </span>
                       </div>
 
                       {item.historicalSummary && (
@@ -649,6 +711,77 @@ export default function SearchPage() {
                         >
                           {item.historicalSummary}
                         </p>
+                      )}
+
+                      {item.citation && (
+                        <div
+                          style={{
+                            marginBottom: 12,
+                            padding: 12,
+                            borderRadius: 12,
+                            background: "#f8fafc",
+                            border: "1px solid rgba(15,23,42,0.06)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                            Citation
+                          </div>
+                          <div style={{ color: "#334155", fontSize: 14, lineHeight: 1.6 }}>
+                            {item.citation.chicago}
+                          </div>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              flexWrap: "wrap",
+                              marginTop: 10,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => copyText(item.citation!.chicago)}
+                              style={{
+                                border: "1px solid rgba(15,23,42,0.08)",
+                                background: "#fff",
+                                padding: "8px 12px",
+                                borderRadius: 999,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Copier Chicago
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => copyText(item.citation!.mla)}
+                              style={{
+                                border: "1px solid rgba(15,23,42,0.08)",
+                                background: "#fff",
+                                padding: "8px 12px",
+                                borderRadius: 999,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Copier MLA
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => copyText(item.citation!.apa)}
+                              style={{
+                                border: "1px solid rgba(15,23,42,0.08)",
+                                background: "#fff",
+                                padding: "8px 12px",
+                                borderRadius: 999,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Copier APA
+                            </button>
+                          </div>
+                        </div>
                       )}
 
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -701,6 +834,60 @@ export default function SearchPage() {
                           {favorite ? "★ Favori" : "☆ Ajouter aux favoris"}
                         </button>
                       </div>
+
+                      {item.related && item.related.length > 0 && (
+                        <div
+                          style={{
+                            marginTop: 14,
+                            padding: 12,
+                            borderRadius: 14,
+                            background: "linear-gradient(135deg, #faf5ff, #eff6ff)",
+                            border: "1px solid rgba(15,23,42,0.06)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                            📚 Travaux liés
+                          </div>
+
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {item.related.map((related) => (
+                              <div
+                                key={related.id}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  flexWrap: "wrap",
+                                }}
+                              >
+                                <div style={{ color: "#334155" }}>
+                                  <strong>{related.title}</strong>
+                                  <span style={{ color: "#64748b" }}>
+                                    {" "}
+                                    — {related.source}
+                                    {related.year ? `, ${related.year}` : ""}
+                                  </span>
+                                </div>
+
+                                {related.officialUrl && (
+                                  <a
+                                    href={related.officialUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{
+                                      color: "#2563eb",
+                                      textDecoration: "none",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    Ouvrir
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </article>

@@ -18,10 +18,37 @@ type UnifiedResult = {
 
 type RelevanceLabel = "exact" | "strong" | "related";
 
+type CitationSet = {
+  chicago: string;
+  mla: string;
+  apa: string;
+};
+
+type ResultBadges = {
+  isPrimary: boolean;
+  hasScan: boolean;
+  isOfficial: boolean;
+};
+
+type RelatedWork = {
+  id: string;
+  title: string;
+  year: string | null;
+  source: string;
+  officialUrl: string | null;
+};
+
 type ScoredResult = UnifiedResult & {
   score: number;
   exactScore: number;
   relevanceLabel: RelevanceLabel;
+};
+
+type EnrichedResult = ScoredResult & {
+  citation: CitationSet;
+  badges: ResultBadges;
+  related: RelatedWork[];
+  historicalSummary: string | null;
 };
 
 type SmartLink = {
@@ -101,6 +128,12 @@ function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+function tokenize(value: string): string[] {
+  return normalizeForMatch(value)
+    .split(" ")
+    .filter((w) => w.length > 2);
+}
+
 function dedupeResults(results: UnifiedResult[]): UnifiedResult[] {
   const seen = new Set<string>();
   const unique: UnifiedResult[] = [];
@@ -115,13 +148,32 @@ function dedupeResults(results: UnifiedResult[]): UnifiedResult[] {
   return unique;
 }
 
+function dedupeByOfficialUrl(results: UnifiedResult[]): UnifiedResult[] {
+  const seen = new Set<string>();
+  const unique: UnifiedResult[] = [];
+
+  for (const item of results) {
+    const key =
+      item.officialUrl?.toLowerCase() ||
+      `${item.title.toLowerCase()}|${item.year ?? ""}|${item.source}`;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
 function convertParsedToAnalysis(prompt: string) {
   const parsed = parseHistoricalPrompt(prompt);
 
   const extractedYear =
     parsed.dateExact && /^\d{4}$/.test(parsed.dateExact)
       ? parsed.dateExact
-      : parsed.dateFrom && parsed.dateTo && parsed.dateTo - parsed.dateFrom <= 4
+      : parsed.dateFrom &&
+        parsed.dateTo &&
+        parsed.dateTo - parsed.dateFrom <= 4
       ? String(parsed.dateFrom + 2)
       : null;
 
@@ -168,7 +220,9 @@ function convertParsedToAnalysis(prompt: string) {
   const summary = parsed.isHistorical
     ? `Recherche historique interprétée comme ${parsed.intent}, avec priorité aux documents ${
         documentTypes.length ? documentTypes.join(", ") : "historiques"
-      } et aux archives ${preferredSources.length ? preferredSources.join(", ") : "générales"}.`
+      } et aux archives ${
+        preferredSources.length ? preferredSources.join(", ") : "générales"
+      }.`
     : "La demande ne semble pas relever clairement de la recherche historique.";
 
   return {
@@ -208,11 +262,17 @@ function buildShortQueries(prompt: string, analysis: PromptAnalysis): string[] {
     shortQueries.add("journal officiel france");
     if (analysis.extractedYear) {
       shortQueries.add(`journal officiel france ${analysis.extractedYear}`);
-      shortQueries.add(`journal officiel republique francaise ${analysis.extractedYear}`);
+      shortQueries.add(
+        `journal officiel republique francaise ${analysis.extractedYear}`
+      );
     }
   }
 
-  if (q.includes("accords d evian") || q.includes("accords evian") || q.includes("evian")) {
+  if (
+    q.includes("accords d evian") ||
+    q.includes("accords evian") ||
+    q.includes("evian")
+  ) {
     shortQueries.add("accords evian 1962");
     shortQueries.add("evian accords 1962");
     shortQueries.add("france algerie evian 1962");
@@ -369,7 +429,10 @@ function computeScore(
     score += 4;
   }
 
-  if (analysis.intent === "event" && (item.documentType === "Journal" || item.documentType === "Archive")) {
+  if (
+    analysis.intent === "event" &&
+    (item.documentType === "Journal" || item.documentType === "Archive")
+  ) {
     score += 2;
   }
 
@@ -383,10 +446,6 @@ function computeScore(
 
   return score;
 }
-
-/* =========================
-   NOUVEAU : ranking historique
-   ========================= */
 
 function computeHistoricalRelevance(
   item: UnifiedResult,
@@ -530,8 +589,8 @@ function buildExternalPortals(prompt: string): ExternalPortal[] {
   ];
 }
 
-function applyFilters(
-  results: ScoredResult[],
+function applyFilters<T extends UnifiedResult>(
+  results: T[],
   filters: {
     source?: string;
     documentType?: string;
@@ -539,7 +598,7 @@ function applyFilters(
     yearFrom?: number | null;
     yearTo?: number | null;
   }
-): ScoredResult[] {
+): T[] {
   return results.filter((item) => {
     if (filters.source && filters.source !== "all" && item.source !== filters.source) {
       return false;
@@ -571,8 +630,11 @@ function applyFilters(
   });
 }
 
-async function searchInternetArchive(query: string, page: number): Promise<UnifiedResult[]> {
-  const rows = 30;
+async function searchInternetArchive(
+  query: string,
+  page: number
+): Promise<UnifiedResult[]> {
+  const rows = 50;
 
   const url =
     "https://archive.org/advancedsearch.php" +
@@ -604,9 +666,14 @@ async function searchInternetArchive(query: string, page: number): Promise<Unifi
       ? doc.language[0]
       : doc.language ?? null,
     documentType: doc.mediatype === "texts" ? "Livre" : "Autre",
-    sourceType: doc.mediatype === "texts" ? "Source secondaire" : "Source primaire",
-    officialUrl: doc.identifier ? `https://archive.org/details/${doc.identifier}` : null,
-    thumbnailUrl: doc.identifier ? `https://archive.org/services/img/${doc.identifier}` : null,
+    sourceType:
+      doc.mediatype === "texts" ? "Source secondaire" : "Source primaire",
+    officialUrl: doc.identifier
+      ? `https://archive.org/details/${doc.identifier}`
+      : null,
+    thumbnailUrl: doc.identifier
+      ? `https://archive.org/services/img/${doc.identifier}`
+      : null,
     source: "Internet Archive",
   }));
 }
@@ -683,7 +750,10 @@ async function searchGallica(query: string, page: number): Promise<UnifiedResult
   return results;
 }
 
-async function searchLibraryOfCongress(query: string, page: number): Promise<UnifiedResult[]> {
+async function searchLibraryOfCongress(
+  query: string,
+  page: number
+): Promise<UnifiedResult[]> {
   const pageSize = 30;
 
   const url =
@@ -791,6 +861,7 @@ async function searchNara(query: string, page: number): Promise<UnifiedResult[]>
     };
   });
 }
+
 function resolveKnownHistoricalWork(prompt: string): UnifiedResult | null {
   const q = normalizeForMatch(prompt);
 
@@ -845,6 +916,347 @@ function resolveKnownHistoricalWork(prompt: string): UnifiedResult | null {
   return null;
 }
 
+function removeArabicBookPrefix(value: string): string {
+  return value.replace(/^كتاب\s+/i, "").trim();
+}
+
+function generateTitleVariants(prompt: string): string[] {
+  const q = normalizeForMatch(prompt);
+  const variants = new Set<string>();
+
+  variants.add(prompt.trim());
+  variants.add(q);
+
+  const noBookPrefix = removeArabicBookPrefix(q);
+  if (noBookPrefix) variants.add(noBookPrefix);
+
+  const withoutPunctuation = q
+    .replace(/[:.,;!?()[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (withoutPunctuation) variants.add(withoutPunctuation);
+
+  const words = q.split(" ").filter((w) => w.length > 2);
+
+  if (words.length >= 2) {
+    variants.add(words.join(" "));
+  }
+
+  if (words.length >= 3) {
+    variants.add(words.slice(0, 3).join(" "));
+    variants.add(words.slice(-3).join(" "));
+  }
+
+  if (q.includes("روض القرطاس") || q.includes("الانيس المطرب")) {
+    variants.add("روض القرطاس");
+    variants.add("الأنيس المطرب بروض القرطاس");
+    variants.add("rawd al qirtas");
+    variants.add("rawdolkirtas");
+  }
+
+  if (
+    q.includes("etude commerciale et agricole") ||
+    q.includes("étude commerciale et agricole")
+  ) {
+    variants.add("le maroc etude commerciale et agricole");
+    variants.add("maroc etude commerciale agricole");
+    variants.add("le maroc étude commerciale et agricole");
+  }
+
+  if (q.includes("traité de tafna") || q.includes("traite de tafna") || q.includes("tafna")) {
+    variants.add("traité de tafna");
+    variants.add("traite de tafna");
+    variants.add("treaty of tafna");
+    variants.add("tafna treaty");
+    variants.add("abdelkader tafna");
+    variants.add("abdelkader 1837");
+    variants.add("معاهدة تافنة");
+  }
+
+  if (q.includes("معاهدة")) {
+    variants.add("treaty");
+    variants.add("treaty tafna");
+    variants.add("tafna treaty");
+  }
+
+  if (q.includes("تافنة")) {
+    variants.add("tafna");
+    variants.add("treaty of tafna");
+    variants.add("abdelkader tafna");
+  }
+
+  return Array.from(variants).filter(Boolean);
+}
+
+function computeTitleSimilarityScore(prompt: string, title: string): number {
+  const q = normalizeForMatch(prompt);
+  const t = normalizeForMatch(title);
+
+  if (!q || !t) return 0;
+
+  let score = 0;
+
+  if (t === q) score += 120;
+  if (t.includes(q)) score += 60;
+  if (q.includes(t) && t.length > 8) score += 30;
+
+  const qTokens = tokenize(q);
+  const tTokens = new Set(tokenize(t));
+
+  let overlap = 0;
+  for (const token of qTokens) {
+    if (tTokens.has(token)) overlap += 1;
+  }
+
+  score += overlap * 10;
+
+  const rareBoostTerms = [
+    "tafna",
+    "evian",
+    "qirtas",
+    "قرطاس",
+    "الانيس",
+    "المطرب",
+    "abdelkader",
+    "journal",
+    "officiel",
+    "maroc",
+  ];
+
+  for (const term of rareBoostTerms) {
+    if (
+      q.includes(normalizeForMatch(term)) &&
+      t.includes(normalizeForMatch(term))
+    ) {
+      score += 12;
+    }
+  }
+
+  const strongTerms = [
+    "tafna",
+    "abdelkader",
+    "evian",
+    "maroc",
+    "qirtas",
+    "قرطاس",
+    "الانيس",
+    "المطرب",
+  ];
+
+  for (const term of strongTerms) {
+    if (q.includes(normalizeForMatch(term)) && t.includes(normalizeForMatch(term))) {
+      score += 25;
+    }
+  }
+
+  return score;
+}
+
+function computeResolverScore(item: UnifiedResult, variants: string[]): number {
+  let best = 0;
+
+  for (const variant of variants) {
+    const score = computeTitleSimilarityScore(variant, item.title);
+    if (score > best) best = score;
+  }
+
+  if (item.source === "Gallica / BnF") best += 8;
+  if (item.source === "Internet Archive") best += 8;
+  if (item.sourceType === "Source primaire") best += 6;
+  if (item.documentType === "Livre") best += 6;
+  if (item.documentType === "Manuscrit") best += 8;
+  if (item.officialUrl) best += 4;
+
+  return best;
+}
+
+async function resolveHistoricalWorks(
+  prompt: string,
+  page: number
+): Promise<UnifiedResult[]> {
+  const variants = generateTitleVariants(prompt);
+  const allResults: UnifiedResult[] = [];
+
+  const searches = await Promise.allSettled(
+    variants.map((variant) =>
+      Promise.allSettled([
+        searchInternetArchive(variant, page),
+        searchGallica(variant, page),
+      ])
+    )
+  );
+
+  for (const variantSearch of searches) {
+    if (variantSearch.status !== "fulfilled") continue;
+
+    for (const sourceResult of variantSearch.value) {
+      if (sourceResult.status === "fulfilled") {
+        allResults.push(...sourceResult.value);
+      }
+    }
+  }
+
+  const deduped = dedupeByOfficialUrl(allResults);
+
+  return deduped
+    .map((item) => ({
+      item,
+      resolverScore: computeResolverScore(item, variants),
+    }))
+    .filter((x) => x.resolverScore >= 10)
+    .sort((a, b) => b.resolverScore - a.resolverScore)
+    .map((x) => x.item);
+}
+
+function extractProbableAuthor(title: string): string | null {
+  const cleaned = title.trim();
+
+  const patterns = [
+    /^([^.:]{3,80})\s*[:.-]\s*(.+)$/i,
+    /^(.+?)\s+par\s+([^,.;]{3,80})$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match) {
+      const first = match[1]?.trim();
+      const second = match[2]?.trim();
+
+      if (pattern.source.includes("par")) {
+        return second || null;
+      }
+
+      if (
+        first &&
+        !normalizeForMatch(first).includes("maroc") &&
+        !normalizeForMatch(first).includes("trait") &&
+        first.split(" ").length <= 6
+      ) {
+        return first;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildCitation(item: UnifiedResult): CitationSet {
+  const title = item.title || "Sans titre";
+  const year = item.year || "s.d.";
+  const source = item.source || "Source non précisée";
+  const url = item.officialUrl || "";
+  const author = extractProbableAuthor(item.title);
+
+  const authorPart = author ? `${author}. ` : "";
+  const titlePart = `${title}.`;
+
+  return {
+    chicago: `${authorPart}${titlePart} ${source}, ${year}.${url ? ` ${url}` : ""}`.trim(),
+    mla: `${authorPart}${titlePart} ${source}, ${year}.${url ? ` ${url}` : ""}`.trim(),
+    apa: `${author ? `${author}. ` : ""}(${year}). ${title}. ${source}.${url ? ` ${url}` : ""}`.trim(),
+  };
+}
+
+function buildBadges(item: UnifiedResult): ResultBadges {
+  return {
+    isPrimary: item.sourceType === "Source primaire",
+    hasScan: Boolean(item.officialUrl),
+    isOfficial:
+      item.source.includes("Gallica") ||
+      item.source.includes("Archive") ||
+      item.source.includes("Library"),
+  };
+}
+
+function buildHistoricalSummary(
+  item: UnifiedResult,
+  prompt: string
+): string | null {
+  const q = normalizeForMatch(prompt);
+  const title = normalizeForMatch(item.title);
+
+  const summaryParts: string[] = [];
+
+  if (title.includes("tafna")) {
+    summaryParts.push("Document lié au traité de Tafna ou à son contexte historique.");
+  }
+
+  if (title.includes("evian")) {
+    summaryParts.push("Document lié aux accords d’Évian ou à la guerre d’Algérie.");
+  }
+
+  if (title.includes("journal officiel")) {
+    summaryParts.push(
+      "Source officielle ou périodique administratif potentiellement utile pour la recherche institutionnelle."
+    );
+  }
+
+  if (item.documentType === "Livre") {
+    summaryParts.push("Ouvrage bibliographique consultable comme référence secondaire.");
+  }
+
+  if (item.sourceType === "Source primaire") {
+    summaryParts.push("Ce résultat est classé comme source primaire.");
+  }
+
+  if (item.source.includes("Gallica")) {
+    summaryParts.push("Disponible via Gallica, bibliothèque numérique patrimoniale de la BnF.");
+  }
+
+  if (item.source.includes("Internet Archive")) {
+    summaryParts.push("Disponible via Internet Archive avec accès direct au document numérisé.");
+  }
+
+  if (summaryParts.length === 0 && q && title) {
+    summaryParts.push("Résultat jugé pertinent pour la requête historique saisie.");
+  }
+
+  return summaryParts.join(" ");
+}
+
+function extractKeywords(title: string): string[] {
+  return normalizeForMatch(title)
+    .split(" ")
+    .filter((w) => w.length > 4)
+    .slice(0, 5);
+}
+
+function findRelatedWorks(
+  current: UnifiedResult,
+  all: UnifiedResult[]
+): RelatedWork[] {
+  const keywords = extractKeywords(current.title);
+  const currentTitle = normalizeForMatch(current.title);
+
+  return all
+    .filter((item) => item.id !== current.id)
+    .map((item) => {
+      const title = normalizeForMatch(item.title);
+      let score = 0;
+
+      keywords.forEach((k) => {
+        if (title.includes(k)) score += 2;
+      });
+
+      if (item.source === current.source) score += 1;
+      if (item.documentType === current.documentType) score += 1;
+      if (item.year && current.year && item.year === current.year) score += 1;
+      if (title === currentTitle) score -= 10;
+
+      return { item, relatedScore: score };
+    })
+    .filter((x) => x.relatedScore > 1)
+    .sort((a, b) => b.relatedScore - a.relatedScore)
+    .slice(0, 5)
+    .map(({ item }) => ({
+      id: item.id,
+      title: item.title,
+      year: item.year,
+      source: item.source,
+      officialUrl: item.officialUrl,
+    }));
+}
+
 export async function GET(req: NextRequest) {
   const prompt = req.nextUrl.searchParams.get("q")?.trim();
   const page = Math.max(1, Number(req.nextUrl.searchParams.get("page") || "1"));
@@ -863,52 +1275,57 @@ export async function GET(req: NextRequest) {
   }
 
   const { analysis } = convertParsedToAnalysis(prompt);
-const knownWork = resolveKnownHistoricalWork(prompt);
+  const knownWork = resolveKnownHistoricalWork(prompt);
 
-if (knownWork) {
-  return NextResponse.json({
-    query: prompt,
-    analysis: {
-      ...analysis,
-      exactDocumentMode: true,
-      summary:
-        "Correspondance forte trouvée à partir d’un titre historique connu ou de ses variantes.",
-    },
-    expandedQueries: [prompt],
-    page: 1,
-    pageSize: 1,
-    total: 1,
-    hasMore: false,
-    results: [
-      {
-        ...knownWork,
-        score: 100,
-        exactScore: 100,
-        relevanceLabel: "exact",
+  if (knownWork) {
+    const knownResult: EnrichedResult = {
+      ...knownWork,
+      score: 100,
+      exactScore: 100,
+      relevanceLabel: "exact",
+      citation: buildCitation(knownWork),
+      badges: buildBadges(knownWork),
+      historicalSummary: "Correspondance forte trouvée à partir d’un titre historique connu ou de ses variantes.",
+      related: [],
+    };
+
+    return NextResponse.json({
+      query: prompt,
+      analysis: {
+        ...analysis,
+        exactDocumentMode: true,
+        summary:
+          "Correspondance forte trouvée à partir d’un titre historique connu ou de ses variantes.",
       },
-    ],
-    smartLinks: buildSmartLinks(prompt, analysis),
-    externalPortals: buildExternalPortals(prompt),
-    availableSources: [
-      "all",
-      "Internet Archive",
-      "Gallica / BnF",
-      "Library of Congress",
-      "National Archives (USA)",
-    ],
-    availableDocumentTypes: [
-      "all",
-      "Livre",
-      "Journal",
-      "Manuscrit",
-      "Carte",
-      "Image",
-      "Archive",
-      "Document",
-    ],
-    error: "",
-  });
-}
+      expandedQueries: [prompt],
+      page: 1,
+      pageSize: 1,
+      total: 1,
+      hasMore: false,
+      results: [knownResult],
+      smartLinks: buildSmartLinks(prompt, analysis),
+      externalPortals: buildExternalPortals(prompt),
+      availableSources: [
+        "all",
+        "Internet Archive",
+        "Gallica / BnF",
+        "Library of Congress",
+        "National Archives (USA)",
+      ],
+      availableDocumentTypes: [
+        "all",
+        "Livre",
+        "Journal",
+        "Manuscrit",
+        "Carte",
+        "Image",
+        "Archive",
+        "Document",
+      ],
+      error: "",
+    });
+  }
+
   if (!analysis.isHistorical) {
     return NextResponse.json({
       query: prompt,
@@ -941,18 +1358,21 @@ if (knownWork) {
   try {
     const { queries } = buildArchiveDrivenQueries(prompt);
 
-    const responses = await Promise.allSettled(
-      queries.map((qi) =>
-        Promise.allSettled([
-          searchInternetArchive(qi, page),
-          searchGallica(qi, page),
-          searchLibraryOfCongress(qi, page),
-          searchNara(qi, page),
-        ])
-      )
-    );
+    const [resolverResults, responses] = await Promise.all([
+      resolveHistoricalWorks(prompt, page),
+      Promise.allSettled(
+        queries.map((qi) =>
+          Promise.allSettled([
+            searchInternetArchive(qi, page),
+            searchGallica(qi, page),
+            searchLibraryOfCongress(qi, page),
+            searchNara(qi, page),
+          ])
+        )
+      ),
+    ]);
 
-    const allResults: UnifiedResult[] = [];
+    const allResults: UnifiedResult[] = [...resolverResults];
 
     responses.forEach((queryResult) => {
       if (queryResult.status === "fulfilled") {
@@ -964,7 +1384,7 @@ if (knownWork) {
       }
     });
 
-    const enriched = dedupeResults(allResults)
+    const enrichedBase: ScoredResult[] = dedupeResults(allResults)
       .map((item) => {
         const exactScore = computeExactDocumentScore(item, prompt, analysis);
         const relevance = computeHistoricalRelevance(item, prompt);
@@ -977,10 +1397,10 @@ if (knownWork) {
           relevanceLabel: relevance.label,
         };
       })
-      .filter((item) => item.score >= 1 || item.exactScore >= 4);
+      .filter(() => true);
 
-    const merged = sortHistoricalResults(
-      applyFilters(enriched, {
+    const mergedBase = sortHistoricalResults(
+      applyFilters(enrichedBase, {
         source,
         documentType,
         primaryOnly,
@@ -989,15 +1409,23 @@ if (knownWork) {
       })
     );
 
+    const enrichedResults: EnrichedResult[] = mergedBase.map((item) => ({
+      ...item,
+      citation: buildCitation(item),
+      badges: buildBadges(item),
+      historicalSummary: buildHistoricalSummary(item, prompt),
+      related: findRelatedWorks(item, mergedBase),
+    }));
+
     return NextResponse.json({
       query: prompt,
       analysis,
       expandedQueries: queries,
       page,
-      pageSize: merged.length,
-      total: merged.length,
-      hasMore: merged.length >= 30,
-      results: merged,
+      pageSize: enrichedResults.length,
+      total: enrichedResults.length,
+      hasMore: enrichedResults.length >= 30,
+      results: enrichedResults,
       smartLinks: buildSmartLinks(prompt, analysis),
       externalPortals: buildExternalPortals(prompt),
       availableSources: [
@@ -1017,7 +1445,10 @@ if (knownWork) {
         "Archive",
         "Document",
       ],
-      error: merged.length === 0 ? "Aucun résultat direct trouvé avec les filtres actuels." : "",
+      error:
+        enrichedResults.length === 0
+          ? "Aucun résultat direct trouvé avec les filtres actuels."
+          : "",
     });
   } catch (error) {
     console.error("Erreur API search:", error);
