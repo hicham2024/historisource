@@ -9,7 +9,6 @@ type SearchResult = FavoriteItem & {
   exactScore?: number;
   relevanceLabel?: "exact" | "strong" | "related";
   historicalSummary?: string | null;
-  
   badges?: {
     isPrimary: boolean;
     hasScan: boolean;
@@ -97,7 +96,6 @@ function sourceTypeBadge(label?: string) {
   }
   return badgeStyle("#f1f5f9", "#334155");
 }
-
 
 export default function SearchPage() {
   const [prompt, setPrompt] = useState("");
@@ -699,28 +697,6 @@ export default function SearchPage() {
                         >
                           {item.historicalSummary}
                         </p>
-                      )}
-
-                      
-                            >
-                              Copier MLA
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => copyText(item.citation!.apa)}
-                              style={{
-                                border: "1px solid rgba(15,23,42,0.08)",
-                                background: "#fff",
-                                padding: "8px 12px",
-                                borderRadius: 999,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Copier APA
-                            </button>
-                          </div>
-                        </div>
                       )}
 
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
