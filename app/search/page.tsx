@@ -9,11 +9,7 @@ type SearchResult = FavoriteItem & {
   exactScore?: number;
   relevanceLabel?: "exact" | "strong" | "related";
   historicalSummary?: string | null;
-  citation?: {
-    chicago: string;
-    mla: string;
-    apa: string;
-  };
+  
   badges?: {
     isPrimary: boolean;
     hasScan: boolean;
@@ -102,14 +98,6 @@ function sourceTypeBadge(label?: string) {
   return badgeStyle("#f1f5f9", "#334155");
 }
 
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    alert("Citation copiée.");
-  } catch {
-    alert("Impossible de copier la citation.");
-  }
-}
 
 export default function SearchPage() {
   const [prompt, setPrompt] = useState("");
@@ -713,56 +701,7 @@ export default function SearchPage() {
                         </p>
                       )}
 
-                      {item.citation && (
-                        <div
-                          style={{
-                            marginBottom: 12,
-                            padding: 12,
-                            borderRadius: 12,
-                            background: "#f8fafc",
-                            border: "1px solid rgba(15,23,42,0.06)",
-                          }}
-                        >
-                          <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                            Citation
-                          </div>
-                          <div style={{ color: "#334155", fontSize: 14, lineHeight: 1.6 }}>
-                            {item.citation.chicago}
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 8,
-                              flexWrap: "wrap",
-                              marginTop: 10,
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => copyText(item.citation!.chicago)}
-                              style={{
-                                border: "1px solid rgba(15,23,42,0.08)",
-                                background: "#fff",
-                                padding: "8px 12px",
-                                borderRadius: 999,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Copier Chicago
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => copyText(item.citation!.mla)}
-                              style={{
-                                border: "1px solid rgba(15,23,42,0.08)",
-                                background: "#fff",
-                                padding: "8px 12px",
-                                borderRadius: 999,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
+                      
                             >
                               Copier MLA
                             </button>
